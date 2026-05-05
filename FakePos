@@ -3,11 +3,9 @@
 --  ✦ Title-bar drag only
 --  ✦ X / Y / Z slider + inline type-to-edit  (range ±150,000)
 --  ✦ Per-slider reset buttons on every property
---  ✦ Search bar on Targets & OrbTargets tabs              [NEW]
---  ✦ Account age badge on every player row                [NEW]
 --  ✦ Orbit tab — speed, distance, height, random direction
---  ✦ Separate Orbit Targets tab (independent targeting)  [NEW]
---  ✦ Stick to You mode — spoof tracks your real position [NEW]
+--  ✦ Separate Orbit Targets tab (independent targeting)
+--  ✦ Stick to You mode — spoof tracks your real position
 --  ✦ Fly tab — speed + height controls
 --  ✦ Noclip tab + Ghost Mode enable/disable
 --  ✦ FOV Visualizer overlay
@@ -17,6 +15,7 @@
 --  ✦ Persistent spoofKey + guiKey + esp settings
 --  ✦ Unified save file with settings + presets blocks
 --  ✦ Faraway + Origin presets
+--  ✦ Player search on Targets + OrbTargets tabs          [NEW v8]
 -- ════════════════════════════════════════════════════════════════════════════
 
 local Players          = game:GetService("Players")
@@ -37,7 +36,7 @@ local state = {
     guiKey     = Enum.KeyCode.RightShift,
     -- Orbit
     orbitEnabled  = false,
-    orbitReverse  = false,   -- true = you orbit around the target, false = target orbits around you
+    orbitReverse  = false,
     orbitSpeed    = 1,
     orbitDistance = 20,
     orbitHeight   = 0,
@@ -46,7 +45,7 @@ local state = {
     randomDir  = false,
     randomDirTimer = 0,
     randomDirVec   = Vector3.new(0, 1, 0),
-    -- Stick to player (spoof follows local player's real position + offset)
+    -- Stick to player
     stickEnabled = false,
     -- ESP
     espEnabled = true,
@@ -64,18 +63,17 @@ local state = {
     noclipEnabled = false,
     -- FOV Visualizer
     fovEnabled  = false,
-    fovRange    = 60,  -- degrees half-angle
+    fovRange    = 60,
 }
 local targeted         = {}
-local orbitTargeted    = {}  -- separate targeting for orbit
-local accountAgeCache  = {}  -- [userId] = ageInDays
+local orbitTargeted    = {}
 local customPresets    = {}
 local settingsPresets  = {}
 local spoofConn        = nil
-local orbitConn     = nil
-local flyConn       = nil
-local noclipConn    = nil
-local guiRef        = nil
+local orbitConn        = nil
+local flyConn          = nil
+local noclipConn       = nil
+local guiRef           = nil
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  THEME
@@ -252,9 +250,9 @@ end
 loadAll()
 
 -- ════════════════════════════════════════════════════════════════════════════
---  SPOOF  (offset applied once from a captured base position)
+--  SPOOF
 -- ════════════════════════════════════════════════════════════════════════════
-local spoofBasePos = Vector3.zero   -- captured when spoof is first enabled
+local spoofBasePos = Vector3.zero
 
 local function stopSpoof()
     if spoofConn then spoofConn:Disconnect(); spoofConn = nil end
@@ -270,7 +268,6 @@ end
 
 local function startSpoof()
     stopSpoof()
-    -- Capture the player's real position as the base for all offsets
     local char = LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     spoofBasePos = hrp and hrp.Position or Vector3.zero
@@ -280,7 +277,6 @@ local function startSpoof()
     spoofConn = RunService.Heartbeat:Connect(function(dt)
         if not state.enabled then return end
 
-        -- In stick mode always use the player's live position as base
         local base
         if state.stickEnabled then
             local char = LocalPlayer.Character
@@ -346,12 +342,10 @@ local function startOrbit()
         local oy = state.orbitHeight
 
         if state.orbitReverse then
-            -- MODE: local player orbits around each targeted player
             local char = LocalPlayer.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             if not hrp then return end
 
-            -- Use the first orbit-targeted player as the anchor
             local anchor = nil
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and (state.targetAll or orbitTargeted[p.Name]) then
@@ -363,7 +357,6 @@ local function startOrbit()
                 hrp.CFrame = CFrame.new(anchor + Vector3.new(ox, oy, oz))
             end
         else
-            -- MODE: targeted players orbit around the local player
             local char = LocalPlayer.Character
             local hrp  = char and char:FindFirstChild("HumanoidRootPart")
             local base = hrp and hrp.Position or Vector3.zero
@@ -384,7 +377,6 @@ end
 -- ════════════════════════════════════════════════════════════════════════════
 local function stopFly()
     if flyConn then flyConn:Disconnect(); flyConn = nil end
-    -- re-enable gravity
     local char = LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     if hrp then
@@ -405,14 +397,12 @@ local function startFly()
     local hum = char:FindFirstChildOfClass("Humanoid")
     if hum then hum.PlatformStand = true end
 
-    -- BodyGyro keeps orientation
     local bg = Instance.new("BodyGyro")
     bg.Name       = "FlyBodyGyro"
     bg.MaxTorque  = Vector3.new(1e5, 1e5, 1e5)
     bg.D          = 100
     bg.Parent     = hrp
 
-    -- BodyVelocity drives movement
     local bv = Instance.new("BodyVelocity")
     bv.Name      = "FlyBodyVelocity"
     bv.MaxForce  = Vector3.new(1e5, 1e5, 1e5)
@@ -425,27 +415,16 @@ local function startFly()
         local spd = state.flySpeed
         local vel = Vector3.zero
 
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            vel = vel + (cam.CFrame.LookVector * spd)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            vel = vel - (cam.CFrame.LookVector * spd)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            vel = vel - (cam.CFrame.RightVector * spd)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            vel = vel + (cam.CFrame.RightVector * spd)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-            vel = vel + Vector3.new(0, spd, 0)
-        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + (cam.CFrame.LookVector * spd) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - (cam.CFrame.LookVector * spd) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - (cam.CFrame.RightVector * spd) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + (cam.CFrame.RightVector * spd) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then vel = vel + Vector3.new(0, spd, 0) end
         if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or
            UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
             vel = vel - Vector3.new(0, spd, 0)
         end
 
-        -- Height lock option: if vel is zero, hover at current height
         if vel.Magnitude < 0.01 then
             bv.Velocity = Vector3.new(0,0,0)
         else
@@ -460,7 +439,6 @@ end
 -- ════════════════════════════════════════════════════════════════════════════
 local function stopNoclip()
     if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
-    -- Re-enable collisions
     local char = LocalPlayer.Character
     if char then
         for _, p in ipairs(char:GetDescendants()) do
@@ -504,8 +482,6 @@ local function buildFOVGui(parentGui)
     fovGui.ZIndex             = 50
     fovGui.Parent             = parentGui
 
-    -- We draw the FOV circle using many thin frames arranged in a circle
-    -- This is a screen-space circle centered on the middle of the screen
     local lines = {}
     for i = 1, FOV_SEGMENTS do
         local seg = Instance.new("Frame")
@@ -518,7 +494,6 @@ local function buildFOVGui(parentGui)
         lines[i] = seg
     end
 
-    -- Update loop
     local fovUpdateConn
     fovUpdateConn = RunService.RenderStepped:Connect(function()
         if not state.fovEnabled or not fovGui or not fovGui.Parent then
@@ -529,11 +504,8 @@ local function buildFOVGui(parentGui)
         local cx = screenSize.X / 2
         local cy = screenSize.Y / 2
 
-        -- Convert fov half-angle (degrees) to screen-space radius
-        -- We use the camera's current FOV to project correctly
         local camFOV    = workspace.CurrentCamera.FieldOfView
         local halfFOV   = math.rad(camFOV / 2)
-        -- screenRadius so that state.fovRange degrees = radius in pixels
         local halfRange = math.rad(state.fovRange)
         local screenRadius = (math.tan(halfRange) / math.tan(halfFOV)) * (screenSize.Y / 2)
 
@@ -542,7 +514,6 @@ local function buildFOVGui(parentGui)
             local px    = cx + math.cos(angle) * screenRadius
             local py    = cy + math.sin(angle) * screenRadius
             seg.Position = UDim2.new(0, px, 0, py)
-            -- Color shifts with proximity: inside = green, boundary = yellow
             local bright = 0.85 + 0.15 * math.sin(angle * 3 + tick() * 2)
             seg.BackgroundColor3 = Color3.fromRGB(
                 math.floor(255 * bright),
@@ -556,7 +527,7 @@ local function buildFOVGui(parentGui)
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
---  ESP ENGINE  (unchanged from v4)
+--  ESP ENGINE
 -- ════════════════════════════════════════════════════════════════════════════
 local espObjects = {}
 local ESP_FOLDER_NAME = "FakePosESP"
@@ -648,7 +619,6 @@ local function refreshAllESP()
     if not state.espEnabled then return end
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
-            -- ESP is always shown for all players when enabled, regardless of target selection
             if plr.Character then buildESP(plr) end
             plr.CharacterAdded:Connect(function()
                 task.wait()
@@ -791,7 +761,6 @@ local function makeSlider(parent, lText, minV, maxV, defV, onChange, accentColor
     valBox.ClearTextOnFocus=false; valBox.ZIndex=6; valBox.Parent=hdr; corner(valBox,5); stroke(valBox,acd,1)
     local vbPad=Instance.new("UIPadding"); vbPad.PaddingRight=UDim.new(0,5); vbPad.Parent=valBox
 
-    -- Reset button (resets to default value)
     local resetBtn=Instance.new("TextButton"); resetBtn.Size=UDim2.new(0.18,-2,1,2)
     resetBtn.Position=UDim2.new(0.82,2,0,-1)
     resetBtn.BackgroundColor3=T.surface; resetBtn.BorderSizePixel=0; resetBtn.Text="↺"
@@ -827,7 +796,6 @@ local function makeSlider(parent, lText, minV, maxV, defV, onChange, accentColor
     end
     setV(defV,false)
 
-    -- Wire up reset button to restore default
     resetBtn.MouseButton1Click:Connect(function()
         setV(defV,true)
         tw(resetBtn,{BackgroundColor3=T.accentD}); task.delay(0.3,function() tw(resetBtn,{BackgroundColor3=T.surface}) end)
@@ -866,7 +834,7 @@ local function makeSlider(parent, lText, minV, maxV, defV, onChange, accentColor
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
---  TOGGLE CARD FACTORY  (generic on/off card row)
+--  TOGGLE CARD FACTORY
 -- ════════════════════════════════════════════════════════════════════════════
 local function makeToggleCard(parent, labelText, descText, initVal, order, onCol, onChange)
     local oc = onCol or T.accent
@@ -890,6 +858,58 @@ local function makeToggleCard(parent, labelText, descText, initVal, order, onCol
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
+--  SEARCH BAR HELPER
+-- ════════════════════════════════════════════════════════════════════════════
+local function makeSearchBar(parent, layoutOrder, borderColor, onChanged)
+    local searchRow = Instance.new("Frame")
+    searchRow.Size = UDim2.new(1, 0, 0, 36)
+    searchRow.BackgroundColor3 = T.card
+    searchRow.BorderSizePixel = 0
+    searchRow.LayoutOrder = layoutOrder
+    searchRow.Parent = parent
+    corner(searchRow, 8)
+    stroke(searchRow, borderColor or T.border, 1)
+
+    local iconLbl = Instance.new("TextLabel")
+    iconLbl.Size = UDim2.new(0, 30, 1, 0)
+    iconLbl.Position = UDim2.new(0, 4, 0, 0)
+    iconLbl.BackgroundTransparency = 1
+    iconLbl.Text = "🔍"
+    iconLbl.TextSize = 14
+    iconLbl.Font = Enum.Font.Gotham
+    iconLbl.TextColor3 = T.sub
+    iconLbl.TextXAlignment = Enum.TextXAlignment.Center
+    iconLbl.Parent = searchRow
+
+    local searchBox = Instance.new("TextBox")
+    searchBox.Size = UDim2.new(1, -44, 1, -10)
+    searchBox.Position = UDim2.new(0, 34, 0, 5)
+    searchBox.BackgroundTransparency = 1
+    searchBox.BorderSizePixel = 0
+    searchBox.PlaceholderText = "Search players..."
+    searchBox.PlaceholderColor3 = T.sub
+    searchBox.Text = ""
+    searchBox.TextColor3 = T.text
+    searchBox.TextSize = 12
+    searchBox.Font = Enum.Font.Gotham
+    searchBox.ClearTextOnFocus = false
+    searchBox.Parent = searchRow
+
+    searchBox.Focused:Connect(function()
+        tw(searchRow, {BackgroundColor3 = T.cardH})
+    end)
+    searchBox.FocusLost:Connect(function()
+        tw(searchRow, {BackgroundColor3 = T.card})
+    end)
+
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        if onChanged then onChanged(searchBox.Text) end
+    end)
+
+    return searchRow, searchBox
+end
+
+-- ════════════════════════════════════════════════════════════════════════════
 --  BUILD GUI
 -- ════════════════════════════════════════════════════════════════════════════
 local function buildGUI()
@@ -898,7 +918,6 @@ local function buildGUI()
     gui.Parent=(gethui and gethui()) or LocalPlayer:WaitForChild("PlayerGui")
     guiRef=gui
 
-    -- Build FOV visualizer container
     buildFOVGui(gui)
     if not state.fovEnabled then destroyFOVGui() end
 
@@ -917,7 +936,6 @@ local function buildGUI()
     local strip=Instance.new("Frame"); strip.Size=UDim2.new(0,3,0,20); strip.Position=UDim2.new(0,0,0,12)
     strip.BackgroundColor3=T.accent; strip.BorderSizePixel=0; strip.Parent=winFrame; corner(strip,2)
 
-    -- Title bar (drag zone)
     local titleBar=Instance.new("Frame"); titleBar.Size=UDim2.new(1,0,0,44)
     titleBar.BackgroundColor3=T.surface; titleBar.BorderSizePixel=0; titleBar.ZIndex=3; titleBar.Parent=winFrame
 
@@ -945,7 +963,6 @@ local function buildGUI()
     titleLbl.TextColor3=T.text; titleLbl.TextXAlignment=Enum.TextXAlignment.Left
     titleLbl.ZIndex=4; titleLbl.Parent=winFrame
 
-    -- Status pill
     local pill=Instance.new("Frame"); pill.Size=UDim2.new(0,68,0,22); pill.Position=UDim2.new(1,-118,0,11)
     pill.BackgroundColor3=T.accentD; pill.BorderSizePixel=0; pill.ZIndex=4; pill.Parent=winFrame; corner(pill,11)
     local pillDot=Instance.new("Frame"); pillDot.Size=UDim2.new(0,6,0,6); pillDot.Position=UDim2.new(0,8,0.5,-3)
@@ -963,7 +980,6 @@ local function buildGUI()
         end
     end
 
-    -- Minimize button
     local minBtn=Instance.new("TextButton"); minBtn.Size=UDim2.new(0,28,0,22); minBtn.Position=UDim2.new(1,-36,0,11)
     minBtn.BackgroundColor3=T.card; minBtn.BorderSizePixel=0; minBtn.Text="—"; minBtn.TextColor3=T.sub
     minBtn.TextSize=13; minBtn.Font=Enum.Font.GothamBold; minBtn.AutoButtonColor=false; minBtn.ZIndex=5; minBtn.Parent=winFrame; corner(minBtn,6)
@@ -1012,7 +1028,6 @@ local function buildGUI()
     local pages        = {offsetPage, targetPage, orbitPage, orbitTargetPage, flyPage, noclipPage, espPage, settingsPage}
     local tabBtns      = {}
 
-    -- Tab accent colors per tab
     local TAB_COLORS = {
         T.accent, T.accent, T.red, T.red, T.blue, T.purple, T.yellow, T.sub
     }
@@ -1037,7 +1052,7 @@ local function buildGUI()
     end
 
     -- ════════════════════════════════════════════════════════════════════
-    --  OFFSET PAGE  (range ±150,000)
+    --  OFFSET PAGE
     -- ════════════════════════════════════════════════════════════════════
     local _,_,setX = makeSlider(offsetPage,"X  OFFSET",-150000,150000,state.x, function(v) state.x=v end)
     local _,_,setY = makeSlider(offsetPage,"Y  OFFSET",-150000,150000,state.y, function(v) state.y=v end)
@@ -1054,14 +1069,12 @@ local function buildGUI()
         tw(resetBtn,{BackgroundColor3=T.accentD}); task.delay(0.35,function() tw(resetBtn,{BackgroundColor3=T.card}) end)
     end)
 
-    -- Stick to You toggle
     sectionLabel(offsetPage,"FOLLOW MODE")
     local stickCard, _setStickPill = makeToggleCard(
         offsetPage,"📍  Stick to You","Spoof offset tracks your real position live",
         state.stickEnabled,1,T.accent,
         function(v)
             state.stickEnabled = v
-            -- Re-capture base position whenever we disable stick so it freezes at current offset
             if not v then
                 local char = LocalPlayer.Character
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
@@ -1158,29 +1171,21 @@ local function buildGUI()
     rebuildCustom()
 
     -- ════════════════════════════════════════════════════════════════════
-    --  TARGETS PAGE
+    --  TARGETS PAGE  (with search)
     -- ════════════════════════════════════════════════════════════════════
-    -- Search bar
-    local spoofSearchQuery = ""
-    local spoofSearchRow=Instance.new("Frame"); spoofSearchRow.Size=UDim2.new(1,0,0,34); spoofSearchRow.LayoutOrder=0
-    spoofSearchRow.BackgroundColor3=T.card; spoofSearchRow.BorderSizePixel=0; spoofSearchRow.Parent=targetPage
-    corner(spoofSearchRow,8); stroke(spoofSearchRow,T.border)
-    local spoofSearchIcon=Instance.new("TextLabel"); spoofSearchIcon.Size=UDim2.new(0,28,1,0)
-    spoofSearchIcon.BackgroundTransparency=1; spoofSearchIcon.Text="🔍"; spoofSearchIcon.TextSize=13
-    spoofSearchIcon.Font=Enum.Font.Gotham; spoofSearchIcon.TextColor3=T.sub; spoofSearchIcon.Parent=spoofSearchRow
-    local spoofSearchBox=Instance.new("TextBox"); spoofSearchBox.Size=UDim2.new(1,-36,1,-8); spoofSearchBox.Position=UDim2.new(0,28,0,4)
-    spoofSearchBox.BackgroundTransparency=1; spoofSearchBox.PlaceholderText="Search players..."
-    spoofSearchBox.PlaceholderColor3=T.sub; spoofSearchBox.Text=""; spoofSearchBox.TextColor3=T.text
-    spoofSearchBox.TextSize=12; spoofSearchBox.Font=Enum.Font.Gotham; spoofSearchBox.ClearTextOnFocus=false
-    spoofSearchBox.BorderSizePixel=0; spoofSearchBox.Parent=spoofSearchRow
+    local targetSearchQuery = ""
+    local _targetSearchBar, targetSearchBox = makeSearchBar(targetPage, -1, T.accentD, function(q)
+        targetSearchQuery = q
+        -- rebuildTargets is declared below; Lua forward-ref is fine via upvalue
+    end)
 
-    local targetRowsList={}
+    local targetRowsList = {}
     local function rebuildTargets()
-        for _,r in pairs(targetRowsList) do r:Destroy() end; targetRowsList={}
-        local q=spoofSearchQuery:lower()
+        for _,r in pairs(targetRowsList) do r:Destroy() end; targetRowsList = {}
+        local q = targetSearchQuery:lower()
 
-        -- "Target All" header row — always visible
-        local taRow=Instance.new("Frame"); taRow.Size=UDim2.new(1,0,0,50); taRow.LayoutOrder=1
+        -- "Target All" row — always visible
+        local taRow=Instance.new("Frame"); taRow.Size=UDim2.new(1,0,0,50); taRow.LayoutOrder=0
         taRow.BackgroundColor3=T.card; taRow.BorderSizePixel=0; taRow.Parent=targetPage; corner(taRow,10)
         stroke(taRow,state.targetAll and T.accentD or T.border,state.targetAll and 1.5 or 1); table.insert(targetRowsList,taRow)
         local taIconF=Instance.new("Frame"); taIconF.Size=UDim2.new(0,38,0,38); taIconF.Position=UDim2.new(0,6,0.5,-19)
@@ -1207,46 +1212,32 @@ local function buildGUI()
         taRow.MouseEnter:Connect(function() tw(taRow,{BackgroundColor3=T.cardH}) end)
         taRow.MouseLeave:Connect(function() tw(taRow,{BackgroundColor3=T.card}) end)
 
-        local visIdx=0
-        for idx,p in ipairs(Players:GetPlayers()) do
-            if p~=LocalPlayer then
-                -- Filter by search query (display name or username)
-                local matchSearch = q=="" or p.Name:lower():find(q,1,true) or p.DisplayName:lower():find(q,1,true)
-                if matchSearch then
-                    visIdx=visIdx+1
+        -- Per-player rows (filtered by search)
+        local idx = 0
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local dn = p.DisplayName:lower()
+                local un = p.Name:lower()
+                if q == "" or dn:find(q, 1, true) or un:find(q, 1, true) then
+                    idx = idx + 1
                     local active=targeted[p.Name]==true
-                    local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,60); row.LayoutOrder=visIdx+1
+                    local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,54); row.LayoutOrder=idx
                     row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=targetPage; corner(row,10)
                     stroke(row,active and T.accentD or T.border,active and 1.5 or 1); table.insert(targetRowsList,row)
-
-                    -- Avatar column (left 56px): circle + age badge stacked
-                    local avaCol=Instance.new("Frame"); avaCol.Size=UDim2.new(0,52,1,0); avaCol.Position=UDim2.new(0,4,0,0)
-                    avaCol.BackgroundTransparency=1; avaCol.Parent=row
-                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,6,0,8)
-                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=avaCol; corner(avaCircle,20)
+                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,7,0.5,-20)
+                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=row; corner(avaCircle,20)
                     if active then stroke(avaCircle,T.accent,2) end
                     local avaImg=Instance.new("ImageLabel"); avaImg.Size=UDim2.new(1,0,1,0); avaImg.BackgroundTransparency=1; avaImg.Image=""; avaImg.Parent=avaCircle
                     local uid=p.UserId; task.spawn(function()
                         local ok,img=pcall(function() return Players:GetUserThumbnailAsync(uid,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end)
                         if ok and img then avaImg.Image=img end
                     end)
-                    -- Age badge sits below the avatar circle, centred in avaCol
-                    local ageBadge=Instance.new("Frame"); ageBadge.Size=UDim2.new(1,-4,0,13); ageBadge.Position=UDim2.new(0,2,0,50)
-                    ageBadge.BackgroundColor3=T.surface; ageBadge.BorderSizePixel=0; ageBadge.ZIndex=6; ageBadge.Parent=avaCol; corner(ageBadge,4); stroke(ageBadge,T.border)
-                    local ageLbl=Instance.new("TextLabel"); ageLbl.Size=UDim2.new(1,0,1,0)
-                    ageLbl.BackgroundTransparency=1; ageLbl.Text="..."; ageLbl.TextSize=7; ageLbl.Font=Enum.Font.GothamBold
-                    ageLbl.TextColor3=T.sub; ageLbl.TextXAlignment=Enum.TextXAlignment.Center; ageLbl.ZIndex=7; ageLbl.Parent=ageBadge
-                    getAccountAge(uid, function(label) ageLbl.Text=label end)
-
-                    -- Names (to the right of the avatar column)
-                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-112,0,18); dispN.Position=UDim2.new(0,58,0,12)
+                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-106,0,18); dispN.Position=UDim2.new(0,55,0,9)
                     dispN.BackgroundTransparency=1; dispN.Text=p.DisplayName; dispN.TextSize=13; dispN.Font=Enum.Font.GothamBold
                     dispN.TextColor3=active and T.text or T.sub; dispN.TextXAlignment=Enum.TextXAlignment.Left; dispN.TextTruncate=Enum.TextTruncate.AtEnd; dispN.Parent=row
-                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-112,0,13); userN.Position=UDim2.new(0,58,0,32)
+                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-106,0,13); userN.Position=UDim2.new(0,55,0,29)
                     userN.BackgroundTransparency=1; userN.Text="@"..p.Name; userN.TextSize=10; userN.Font=Enum.Font.Gotham
                     userN.TextColor3=T.sub; userN.TextXAlignment=Enum.TextXAlignment.Left; userN.TextTruncate=Enum.TextTruncate.AtEnd; userN.Parent=row
-
-                    -- Toggle pill
                     local pPill=Instance.new("Frame"); pPill.Size=UDim2.new(0,40,0,22); pPill.Position=UDim2.new(1,-48,0.5,-11)
                     pPill.BackgroundColor3=active and T.accent or T.border; pPill.BorderSizePixel=0; pPill.Parent=row; corner(pPill,11)
                     local pPT=Instance.new("Frame"); pPT.Size=UDim2.new(0,15,0,15)
@@ -1266,11 +1257,21 @@ local function buildGUI()
                 end
             end
         end
+
+        -- "No results" label when search yields nothing
+        if idx == 0 and q ~= "" then
+            local noRes=Instance.new("TextLabel"); noRes.Size=UDim2.new(1,0,0,36); noRes.LayoutOrder=1
+            noRes.BackgroundTransparency=1; noRes.Text='No players match "'..targetSearchQuery..'"'
+            noRes.TextSize=11; noRes.Font=Enum.Font.Gotham; noRes.TextColor3=T.sub
+            noRes.TextXAlignment=Enum.TextXAlignment.Center; noRes.Parent=targetPage
+            table.insert(targetRowsList, noRes)
+        end
     end
 
-    -- Live search filter
-    spoofSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        spoofSearchQuery = spoofSearchBox.Text; rebuildTargets()
+    -- Wire search box now that rebuildTargets is defined
+    targetSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        targetSearchQuery = targetSearchBox.Text
+        rebuildTargets()
     end)
 
     Players.PlayerAdded:Connect(rebuildTargets)
@@ -1300,7 +1301,6 @@ local function buildGUI()
         end
     )
 
-    -- Orbit mode: reverse toggle (you orbit them vs they orbit you)
     sectionLabel(orbitPage,"ORBIT MODE",3)
     local orbitModeCard=Instance.new("Frame"); orbitModeCard.Size=UDim2.new(1,0,0,54); orbitModeCard.LayoutOrder=4
     orbitModeCard.BackgroundColor3=T.card; orbitModeCard.BorderSizePixel=0; orbitModeCard.Parent=orbitPage; corner(orbitModeCard,10); stroke(orbitModeCard,T.border)
@@ -1323,9 +1323,7 @@ local function buildGUI()
     updateOrbitModeLabels()
 
     local _orbitModePill, setOrbitModePill = makePillToggleColored(orbitModeCard, state.orbitReverse, T.red, T.border, function(v)
-        state.orbitReverse = v
-        updateOrbitModeLabels()
-        saveAll()
+        state.orbitReverse = v; updateOrbitModeLabels(); saveAll()
     end)
     _orbitModePill.Position=UDim2.new(1,-52,0.5,-11); _orbitModePill.Parent=orbitModeCard
     orbitModeCard.MouseEnter:Connect(function() tw(orbitModeCard,{BackgroundColor3=T.cardH}) end)
@@ -1336,7 +1334,6 @@ local function buildGUI()
     local _,_,setOrbitDistance = makeSlider(orbitPage,"DISTANCE",   1,150000,state.orbitDistance,function(v) state.orbitDistance=v; saveAll() end, T.red)
     local _,_,setOrbitHeight   = makeSlider(orbitPage,"HEIGHT",     -150000,150000,state.orbitHeight,  function(v) state.orbitHeight=v;  saveAll() end, T.red)
 
-    -- Random direction orbit button
     sectionLabel(orbitPage,"DIRECTION",7)
     local randOrbitCard=Instance.new("Frame"); randOrbitCard.Size=UDim2.new(1,0,0,54); randOrbitCard.LayoutOrder=8
     randOrbitCard.BackgroundColor3=T.card; randOrbitCard.BorderSizePixel=0; randOrbitCard.Parent=orbitPage; corner(randOrbitCard,10); stroke(randOrbitCard,T.border)
@@ -1354,7 +1351,7 @@ local function buildGUI()
     randOrbitCard.MouseLeave:Connect(function() tw(randOrbitCard,{BackgroundColor3=T.card}) end)
 
     -- ════════════════════════════════════════════════════════════════════
-    --  ORBIT TARGETS PAGE  (separate from Spoof targets)
+    --  ORBIT TARGETS PAGE  (with search)
     -- ════════════════════════════════════════════════════════════════════
     sectionLabel(orbitTargetPage,"ORBIT TARGETS",0)
 
@@ -1367,27 +1364,19 @@ local function buildGUI()
     orbitTargetInfoLbl.Text="🔴  Choose which players the Orbit system affects.\nThis is separate from Position Spoof targets."
     orbitTargetInfoLbl.Parent=orbitTargetInfoCard
 
-    -- Orbit target search bar
+    -- Search bar for orbit targets (LayoutOrder=2, after info card)
     local orbitSearchQuery = ""
-    local orbitSearchRow=Instance.new("Frame"); orbitSearchRow.Size=UDim2.new(1,0,0,34); orbitSearchRow.LayoutOrder=1
-    orbitSearchRow.BackgroundColor3=T.card; orbitSearchRow.BorderSizePixel=0; orbitSearchRow.Parent=orbitTargetPage
-    corner(orbitSearchRow,8); stroke(orbitSearchRow,Color3.fromRGB(80,18,18))
-    local orbitSearchIcon=Instance.new("TextLabel"); orbitSearchIcon.Size=UDim2.new(0,28,1,0)
-    orbitSearchIcon.BackgroundTransparency=1; orbitSearchIcon.Text="🔍"; orbitSearchIcon.TextSize=13
-    orbitSearchIcon.Font=Enum.Font.Gotham; orbitSearchIcon.TextColor3=T.sub; orbitSearchIcon.Parent=orbitSearchRow
-    local orbitSearchBox=Instance.new("TextBox"); orbitSearchBox.Size=UDim2.new(1,-36,1,-8); orbitSearchBox.Position=UDim2.new(0,28,0,4)
-    orbitSearchBox.BackgroundTransparency=1; orbitSearchBox.PlaceholderText="Search players..."
-    orbitSearchBox.PlaceholderColor3=T.sub; orbitSearchBox.Text=""; orbitSearchBox.TextColor3=T.text
-    orbitSearchBox.TextSize=12; orbitSearchBox.Font=Enum.Font.Gotham; orbitSearchBox.ClearTextOnFocus=false
-    orbitSearchBox.BorderSizePixel=0; orbitSearchBox.Parent=orbitSearchRow
+    local _orbitSearchBar, orbitSearchBox = makeSearchBar(orbitTargetPage, 2, Color3.fromRGB(80,18,18), function(q)
+        orbitSearchQuery = q
+    end)
 
     local orbitTargetRowsList={}
     local function rebuildOrbitTargets()
         for _,r in pairs(orbitTargetRowsList) do r:Destroy() end; orbitTargetRowsList={}
-        local q=orbitSearchQuery:lower()
+        local q = orbitSearchQuery:lower()
 
-        -- Orbit All header row — always visible
-        local taRow=Instance.new("Frame"); taRow.Size=UDim2.new(1,0,0,50); taRow.LayoutOrder=2
+        -- Target All row — always visible
+        local taRow=Instance.new("Frame"); taRow.Size=UDim2.new(1,0,0,50); taRow.LayoutOrder=3
         taRow.BackgroundColor3=T.card; taRow.BorderSizePixel=0; taRow.Parent=orbitTargetPage; corner(taRow,10)
         stroke(taRow,state.targetAll and T.red or T.border,state.targetAll and 1.5 or 1); table.insert(orbitTargetRowsList,taRow)
         local taIconF=Instance.new("Frame"); taIconF.Size=UDim2.new(0,38,0,38); taIconF.Position=UDim2.new(0,6,0.5,-19)
@@ -1408,52 +1397,37 @@ local function buildGUI()
         oTaPT.BackgroundColor3=Color3.fromRGB(240,240,240); oTaPT.BorderSizePixel=0; oTaPT.Parent=oTaPill; corner(oTaPT,8)
         local oTaClick=Instance.new("TextButton"); oTaClick.Size=UDim2.new(1,0,1,0); oTaClick.BackgroundTransparency=1; oTaClick.Text=""; oTaClick.Parent=taRow
         oTaClick.MouseButton1Click:Connect(function()
-            state.targetAll=not state.targetAll
-            rebuildOrbitTargets()
+            state.targetAll=not state.targetAll; rebuildOrbitTargets()
         end)
         taRow.MouseEnter:Connect(function() tw(taRow,{BackgroundColor3=T.cardH}) end)
         taRow.MouseLeave:Connect(function() tw(taRow,{BackgroundColor3=T.card}) end)
 
-        -- Per-player rows (filtered)
-        local visIdx=0
-        for idx, p in ipairs(Players:GetPlayers()) do
+        -- Per-player rows (filtered by search)
+        local idx = 0
+        for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then
-                local matchSearch = q=="" or p.Name:lower():find(q,1,true) or p.DisplayName:lower():find(q,1,true)
-                if matchSearch then
-                    visIdx=visIdx+1
+                local dn = p.DisplayName:lower()
+                local un = p.Name:lower()
+                if q == "" or dn:find(q, 1, true) or un:find(q, 1, true) then
+                    idx = idx + 1
                     local active = orbitTargeted[p.Name] == true
-                    local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,60); row.LayoutOrder=visIdx+2
+                    local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,54); row.LayoutOrder=idx+3
                     row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=orbitTargetPage; corner(row,10)
                     stroke(row,active and Color3.fromRGB(80,18,18) or T.border,active and 1.5 or 1); table.insert(orbitTargetRowsList,row)
-
-                    -- Avatar column (left 56px): circle + age badge stacked
-                    local avaCol=Instance.new("Frame"); avaCol.Size=UDim2.new(0,52,1,0); avaCol.Position=UDim2.new(0,4,0,0)
-                    avaCol.BackgroundTransparency=1; avaCol.Parent=row
-                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,6,0,8)
-                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=avaCol; corner(avaCircle,20)
+                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,7,0.5,-20)
+                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=row; corner(avaCircle,20)
                     if active then stroke(avaCircle,T.red,2) end
                     local avaImg=Instance.new("ImageLabel"); avaImg.Size=UDim2.new(1,0,1,0); avaImg.BackgroundTransparency=1; avaImg.Image=""; avaImg.Parent=avaCircle
                     local uid=p.UserId; task.spawn(function()
                         local ok,img=pcall(function() return Players:GetUserThumbnailAsync(uid,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end)
                         if ok and img then avaImg.Image=img end
                     end)
-                    -- Age badge sits below the avatar circle, centred in avaCol
-                    local ageBadge=Instance.new("Frame"); ageBadge.Size=UDim2.new(1,-4,0,13); ageBadge.Position=UDim2.new(0,2,0,50)
-                    ageBadge.BackgroundColor3=T.surface; ageBadge.BorderSizePixel=0; ageBadge.ZIndex=6; ageBadge.Parent=avaCol; corner(ageBadge,4); stroke(ageBadge,Color3.fromRGB(80,18,18))
-                    local ageLbl=Instance.new("TextLabel"); ageLbl.Size=UDim2.new(1,0,1,0)
-                    ageLbl.BackgroundTransparency=1; ageLbl.Text="..."; ageLbl.TextSize=7; ageLbl.Font=Enum.Font.GothamBold
-                    ageLbl.TextColor3=T.red; ageLbl.TextXAlignment=Enum.TextXAlignment.Center; ageLbl.ZIndex=7; ageLbl.Parent=ageBadge
-                    getAccountAge(uid, function(label) ageLbl.Text=label end)
-
-                    -- Names (to the right of the avatar column)
-                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-112,0,18); dispN.Position=UDim2.new(0,58,0,12)
+                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-106,0,18); dispN.Position=UDim2.new(0,55,0,9)
                     dispN.BackgroundTransparency=1; dispN.Text=p.DisplayName; dispN.TextSize=13; dispN.Font=Enum.Font.GothamBold
                     dispN.TextColor3=active and T.text or T.sub; dispN.TextXAlignment=Enum.TextXAlignment.Left; dispN.TextTruncate=Enum.TextTruncate.AtEnd; dispN.Parent=row
-                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-112,0,13); userN.Position=UDim2.new(0,58,0,32)
+                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-106,0,13); userN.Position=UDim2.new(0,55,0,29)
                     userN.BackgroundTransparency=1; userN.Text="@"..p.Name; userN.TextSize=10; userN.Font=Enum.Font.Gotham
                     userN.TextColor3=T.sub; userN.TextXAlignment=Enum.TextXAlignment.Left; userN.TextTruncate=Enum.TextTruncate.AtEnd; userN.Parent=row
-
-                    -- Toggle pill
                     local pPill=Instance.new("Frame"); pPill.Size=UDim2.new(0,40,0,22); pPill.Position=UDim2.new(1,-48,0.5,-11)
                     pPill.BackgroundColor3=active and T.red or T.border; pPill.BorderSizePixel=0; pPill.Parent=row; corner(pPill,11)
                     local pPT=Instance.new("Frame"); pPT.Size=UDim2.new(0,15,0,15)
@@ -1462,25 +1436,33 @@ local function buildGUI()
                     local clickable=Instance.new("TextButton"); clickable.Size=UDim2.new(1,0,1,0); clickable.BackgroundTransparency=1; clickable.Text=""; clickable.Parent=row
                     local pName=p.Name
                     clickable.MouseButton1Click:Connect(function()
-                        orbitTargeted[pName]=not orbitTargeted[pName]
-                        rebuildOrbitTargets()
+                        orbitTargeted[pName]=not orbitTargeted[pName]; rebuildOrbitTargets()
                     end)
                     row.MouseEnter:Connect(function() tw(row,{BackgroundColor3=T.cardH}) end)
                     row.MouseLeave:Connect(function() tw(row,{BackgroundColor3=T.card}) end)
                 end
             end
         end
+
+        -- "No results" label
+        if idx == 0 and q ~= "" then
+            local noRes=Instance.new("TextLabel"); noRes.Size=UDim2.new(1,0,0,36); noRes.LayoutOrder=4
+            noRes.BackgroundTransparency=1; noRes.Text='No players match "'..orbitSearchQuery..'"'
+            noRes.TextSize=11; noRes.Font=Enum.Font.Gotham; noRes.TextColor3=T.sub
+            noRes.TextXAlignment=Enum.TextXAlignment.Center; noRes.Parent=orbitTargetPage
+            table.insert(orbitTargetRowsList, noRes)
+        end
     end
 
-    -- Live orbit search filter
+    -- Wire orbit search box now that rebuildOrbitTargets is defined
     orbitSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        orbitSearchQuery = orbitSearchBox.Text; rebuildOrbitTargets()
+        orbitSearchQuery = orbitSearchBox.Text
+        rebuildOrbitTargets()
     end)
 
     Players.PlayerAdded:Connect(function() rebuildOrbitTargets() end)
     Players.PlayerRemoving:Connect(function(p) orbitTargeted[p.Name]=nil; rebuildOrbitTargets() end)
 
-    -- Restore orbit on respawn
     LocalPlayer.CharacterAdded:Connect(function()
         task.wait(0.5)
         if state.orbitEnabled then startOrbit() end
@@ -1491,7 +1473,6 @@ local function buildGUI()
     -- ════════════════════════════════════════════════════════════════════
     sectionLabel(flyPage,"FLY CONTROLS",0)
 
-    -- Master fly toggle
     local flyInfoCard=Instance.new("Frame"); flyInfoCard.Size=UDim2.new(1,0,0,70); flyInfoCard.LayoutOrder=1
     flyInfoCard.BackgroundColor3=T.blueD; flyInfoCard.BorderSizePixel=0; flyInfoCard.Parent=flyPage; corner(flyInfoCard,10)
     local flyInfoLbl=Instance.new("TextLabel"); flyInfoLbl.Size=UDim2.new(1,-16,1,0); flyInfoLbl.Position=UDim2.new(0,12,0,0)
@@ -1515,7 +1496,6 @@ local function buildGUI()
     local _,_,setFlySpeed = makeSlider(flyPage,"FLY SPEED",1,150000,state.flySpeed,function(v) state.flySpeed=v; saveAll() end, T.blue)
     local _,_,setFlyHeight= makeSlider(flyPage,"FLY BOOST",1,150000,state.flyHeight,function(v) state.flyHeight=v; saveAll() end, T.blue)
 
-    -- Respawn on character added (re-enable fly)
     LocalPlayer.CharacterAdded:Connect(function()
         task.wait(0.5)
         if state.flyEnabled then startFly() end
@@ -1546,7 +1526,6 @@ local function buildGUI()
         end
     )
 
-    -- Noclip + Fly combo button
     local comboBtn=Instance.new("TextButton"); comboBtn.Size=UDim2.new(1,0,0,38); comboBtn.LayoutOrder=3
     comboBtn.BackgroundColor3=Color3.fromRGB(50,30,70); comboBtn.BorderSizePixel=0
     comboBtn.Text="⚡  Ghost Mode  (Fly + Noclip)"; comboBtn.TextSize=12; comboBtn.Font=Enum.Font.GothamBold
@@ -1560,7 +1539,6 @@ local function buildGUI()
         tw(comboBtn,{BackgroundColor3=T.purpleD}); task.delay(0.4,function() tw(comboBtn,{BackgroundColor3=Color3.fromRGB(50,30,70)}) end)
     end)
 
-    -- Ghost Mode DISABLE button
     local disableGhostBtn=Instance.new("TextButton"); disableGhostBtn.Size=UDim2.new(1,0,0,38); disableGhostBtn.LayoutOrder=4
     disableGhostBtn.BackgroundColor3=Color3.fromRGB(60,20,20); disableGhostBtn.BorderSizePixel=0
     disableGhostBtn.Text="✕  Disable Ghost Mode"; disableGhostBtn.TextSize=12; disableGhostBtn.Font=Enum.Font.GothamBold
@@ -1622,7 +1600,6 @@ local function buildGUI()
         optCard.MouseLeave:Connect(function() tw(optCard,{BackgroundColor3=T.card}) end)
     end
 
-    -- FOV Visualizer section (inside ESP page)
     sectionLabel(espPage,"FOV VISUALIZER",8)
 
     local fovMasterCard=Instance.new("Frame"); fovMasterCard.Size=UDim2.new(1,0,0,44); fovMasterCard.LayoutOrder=9
@@ -1647,12 +1624,10 @@ local function buildGUI()
         saveAll()
     end)
 
-    -- FOV range slider
     local _,_,setFovRange = makeSlider(espPage,"FOV RANGE (°)",5,150000,state.fovRange,function(v)
         state.fovRange=v; saveAll()
     end, T.yellow)
 
-    -- ESP Color section
     sectionLabel(espPage,"ESP COLOR",11)
     local COLOR_SWATCHES={
         {r=122,g=186,b=136,name="Green"},{r=80,g=148,b=228,name="Blue"},
@@ -1734,7 +1709,6 @@ local function buildGUI()
     fileSub_.TextColor3=(writefile and isfile) and T.accent or T.red
     fileSub_.TextXAlignment=Enum.TextXAlignment.Left; fileSub_.Parent=fileCard
 
-    -- ── Unload UI ─────────────────────────────────────────────────────
     sectionLabel(settingsPage,"DANGER ZONE",5)
     local unloadBtn=Instance.new("TextButton"); unloadBtn.Size=UDim2.new(1,0,0,40); unloadBtn.LayoutOrder=6
     unloadBtn.BackgroundColor3=Color3.fromRGB(50,14,14); unloadBtn.BorderSizePixel=0
@@ -1758,7 +1732,6 @@ local function buildGUI()
         end
     end)
 
-    -- ── Settings Presets ──────────────────────────────────────────────
     sectionLabel(settingsPage,"SETTINGS PRESETS",7)
     local spSaveRow=Instance.new("Frame"); spSaveRow.Size=UDim2.new(1,0,0,36); spSaveRow.LayoutOrder=8
     spSaveRow.BackgroundColor3=T.card; spSaveRow.BorderSizePixel=0; spSaveRow.Parent=settingsPage; corner(spSaveRow,8); stroke(spSaveRow,T.border)
@@ -1778,7 +1751,6 @@ local function buildGUI()
 
     local spRows={}
     local function applySettingsPreset(sp)
-        -- Apply every setting from the preset back onto state
         local ok,kc=pcall(function() return Enum.KeyCode[sp.spoofKey] end); if ok and kc then state.spoofKey=kc end
         local ok2,kc2=pcall(function() return Enum.KeyCode[sp.guiKey] end); if ok2 and kc2 then state.guiKey=kc2 end
         state.espEnabled   = sp.espEnabled
@@ -1791,7 +1763,6 @@ local function buildGUI()
         state.fovEnabled   = sp.fovEnabled; state.fovRange = sp.fovRange
         state.orbitSpeed   = sp.orbitSpeed; state.orbitDistance = sp.orbitDistance
         state.orbitHeight  = sp.orbitHeight; state.orbitReverse  = sp.orbitReverse
-        -- Restart active systems with new values
         if state.flyEnabled    then startFly()    end
         if state.orbitEnabled  then startOrbit()  end
         refreshAllESP(); saveAll()
