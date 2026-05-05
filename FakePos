@@ -1219,31 +1219,30 @@ local function buildGUI()
                     row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=targetPage; corner(row,10)
                     stroke(row,active and T.accentD or T.border,active and 1.5 or 1); table.insert(targetRowsList,row)
 
-                    -- Avatar
-                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,7,0.5,-20)
-                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=row; corner(avaCircle,20)
+                    -- Avatar column (left 56px): circle + age badge stacked
+                    local avaCol=Instance.new("Frame"); avaCol.Size=UDim2.new(0,52,1,0); avaCol.Position=UDim2.new(0,4,0,0)
+                    avaCol.BackgroundTransparency=1; avaCol.Parent=row
+                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,6,0,8)
+                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=avaCol; corner(avaCircle,20)
                     if active then stroke(avaCircle,T.accent,2) end
                     local avaImg=Instance.new("ImageLabel"); avaImg.Size=UDim2.new(1,0,1,0); avaImg.BackgroundTransparency=1; avaImg.Image=""; avaImg.Parent=avaCircle
                     local uid=p.UserId; task.spawn(function()
                         local ok,img=pcall(function() return Players:GetUserThumbnailAsync(uid,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end)
                         if ok and img then avaImg.Image=img end
                     end)
-
-                    -- Account age badge (bottom-right of avatar circle)
-                    local ageBadge=Instance.new("Frame"); ageBadge.Size=UDim2.new(0,32,0,14)
-                    ageBadge.Position=UDim2.new(0,7+40-32,0.5+20/60*0,-3)  -- below avatar
-                    ageBadge.Position=UDim2.new(0,9,0.5,12)
-                    ageBadge.BackgroundColor3=T.bg; ageBadge.BorderSizePixel=0; ageBadge.ZIndex=6; ageBadge.Parent=row; corner(ageBadge,4); stroke(ageBadge,T.border)
+                    -- Age badge sits below the avatar circle, centred in avaCol
+                    local ageBadge=Instance.new("Frame"); ageBadge.Size=UDim2.new(1,-4,0,13); ageBadge.Position=UDim2.new(0,2,0,50)
+                    ageBadge.BackgroundColor3=T.surface; ageBadge.BorderSizePixel=0; ageBadge.ZIndex=6; ageBadge.Parent=avaCol; corner(ageBadge,4); stroke(ageBadge,T.border)
                     local ageLbl=Instance.new("TextLabel"); ageLbl.Size=UDim2.new(1,0,1,0)
-                    ageLbl.BackgroundTransparency=1; ageLbl.Text="..."; ageLbl.TextSize=8; ageLbl.Font=Enum.Font.GothamBold
+                    ageLbl.BackgroundTransparency=1; ageLbl.Text="..."; ageLbl.TextSize=7; ageLbl.Font=Enum.Font.GothamBold
                     ageLbl.TextColor3=T.sub; ageLbl.TextXAlignment=Enum.TextXAlignment.Center; ageLbl.ZIndex=7; ageLbl.Parent=ageBadge
                     getAccountAge(uid, function(label) ageLbl.Text=label end)
 
-                    -- Names
-                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-112,0,18); dispN.Position=UDim2.new(0,55,0,10)
+                    -- Names (to the right of the avatar column)
+                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-112,0,18); dispN.Position=UDim2.new(0,58,0,12)
                     dispN.BackgroundTransparency=1; dispN.Text=p.DisplayName; dispN.TextSize=13; dispN.Font=Enum.Font.GothamBold
                     dispN.TextColor3=active and T.text or T.sub; dispN.TextXAlignment=Enum.TextXAlignment.Left; dispN.TextTruncate=Enum.TextTruncate.AtEnd; dispN.Parent=row
-                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-112,0,13); userN.Position=UDim2.new(0,55,0,30)
+                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-112,0,13); userN.Position=UDim2.new(0,58,0,32)
                     userN.BackgroundTransparency=1; userN.Text="@"..p.Name; userN.TextSize=10; userN.Font=Enum.Font.Gotham
                     userN.TextColor3=T.sub; userN.TextXAlignment=Enum.TextXAlignment.Left; userN.TextTruncate=Enum.TextTruncate.AtEnd; userN.Parent=row
 
@@ -1427,30 +1426,30 @@ local function buildGUI()
                     row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=orbitTargetPage; corner(row,10)
                     stroke(row,active and Color3.fromRGB(80,18,18) or T.border,active and 1.5 or 1); table.insert(orbitTargetRowsList,row)
 
-                    -- Avatar
-                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,7,0.5,-20)
-                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=row; corner(avaCircle,20)
+                    -- Avatar column (left 56px): circle + age badge stacked
+                    local avaCol=Instance.new("Frame"); avaCol.Size=UDim2.new(0,52,1,0); avaCol.Position=UDim2.new(0,4,0,0)
+                    avaCol.BackgroundTransparency=1; avaCol.Parent=row
+                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,6,0,8)
+                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=avaCol; corner(avaCircle,20)
                     if active then stroke(avaCircle,T.red,2) end
                     local avaImg=Instance.new("ImageLabel"); avaImg.Size=UDim2.new(1,0,1,0); avaImg.BackgroundTransparency=1; avaImg.Image=""; avaImg.Parent=avaCircle
                     local uid=p.UserId; task.spawn(function()
                         local ok,img=pcall(function() return Players:GetUserThumbnailAsync(uid,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end)
                         if ok and img then avaImg.Image=img end
                     end)
-
-                    -- Account age badge
-                    local ageBadge=Instance.new("Frame"); ageBadge.Size=UDim2.new(0,32,0,14)
-                    ageBadge.Position=UDim2.new(0,9,0.5,12)
-                    ageBadge.BackgroundColor3=T.bg; ageBadge.BorderSizePixel=0; ageBadge.ZIndex=6; ageBadge.Parent=row; corner(ageBadge,4); stroke(ageBadge,Color3.fromRGB(80,18,18))
+                    -- Age badge sits below the avatar circle, centred in avaCol
+                    local ageBadge=Instance.new("Frame"); ageBadge.Size=UDim2.new(1,-4,0,13); ageBadge.Position=UDim2.new(0,2,0,50)
+                    ageBadge.BackgroundColor3=T.surface; ageBadge.BorderSizePixel=0; ageBadge.ZIndex=6; ageBadge.Parent=avaCol; corner(ageBadge,4); stroke(ageBadge,Color3.fromRGB(80,18,18))
                     local ageLbl=Instance.new("TextLabel"); ageLbl.Size=UDim2.new(1,0,1,0)
-                    ageLbl.BackgroundTransparency=1; ageLbl.Text="..."; ageLbl.TextSize=8; ageLbl.Font=Enum.Font.GothamBold
+                    ageLbl.BackgroundTransparency=1; ageLbl.Text="..."; ageLbl.TextSize=7; ageLbl.Font=Enum.Font.GothamBold
                     ageLbl.TextColor3=T.red; ageLbl.TextXAlignment=Enum.TextXAlignment.Center; ageLbl.ZIndex=7; ageLbl.Parent=ageBadge
                     getAccountAge(uid, function(label) ageLbl.Text=label end)
 
-                    -- Names
-                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-112,0,18); dispN.Position=UDim2.new(0,55,0,10)
+                    -- Names (to the right of the avatar column)
+                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-112,0,18); dispN.Position=UDim2.new(0,58,0,12)
                     dispN.BackgroundTransparency=1; dispN.Text=p.DisplayName; dispN.TextSize=13; dispN.Font=Enum.Font.GothamBold
                     dispN.TextColor3=active and T.text or T.sub; dispN.TextXAlignment=Enum.TextXAlignment.Left; dispN.TextTruncate=Enum.TextTruncate.AtEnd; dispN.Parent=row
-                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-112,0,13); userN.Position=UDim2.new(0,55,0,30)
+                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-112,0,13); userN.Position=UDim2.new(0,58,0,32)
                     userN.BackgroundTransparency=1; userN.Text="@"..p.Name; userN.TextSize=10; userN.Font=Enum.Font.Gotham
                     userN.TextColor3=T.sub; userN.TextXAlignment=Enum.TextXAlignment.Left; userN.TextTruncate=Enum.TextTruncate.AtEnd; userN.Parent=row
 
