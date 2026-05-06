@@ -179,7 +179,7 @@ local function serSettings()
         tostring(state.orbitReverse),
         tostring(state.aimbotEnabled), state.aimbotFOV, state.aimbotSmooth, state.aimbotBone,
         tostring(state.aimbotHoldRMB),
-        tostring(state.triggerEnabled), state.triggerDelay, state.triggerFOV,
+        tostring(state.triggerEnabled), state.triggerDelay, state.triggerFOV
     )
 end
 
