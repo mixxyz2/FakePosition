@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════════════════════
---  Fake Position Spoof  ·  Matcha UI  ·  v10.0
+--  Fake Position Spoof  ·  Matcha UI  ·  v11.0
 --  ✦ Title-bar drag only
 --  ✦ X / Y / Z slider + inline type-to-edit  (range ±150,000)
 --  ✦ Per-slider reset buttons on every property
@@ -103,10 +103,10 @@ local state = {
     aimbotSmooth  = 10,
     aimbotBone    = "Head",
     aimbotHoldRMB = true,
-    -- Silent Aim
-    silentEnabled = false,
-    silentFOV     = 200,
-    silentBone    = "Head",
+    -- Triggerbot
+    triggerEnabled = false,
+    triggerDelay   = 80,
+    triggerFOV     = 60,
     -- Ragebot
     ragebotEnabled    = false,
     ragebotHitchance  = 100,
@@ -130,8 +130,8 @@ local noclipConn       = nil
 local aimbotConn       = nil
 local ragebotConn      = nil
 local ragebotFiring    = false
-local silentHooked     = false
-local silentOrigCF     = nil
+local triggerConn      = nil
+local triggerFiring    = false
 local guiRef           = nil
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -158,6 +158,8 @@ local T = {
     blueD   = Color3.fromRGB(40,   80, 140),
     purple  = Color3.fromRGB(160, 100, 220),
     purpleD = Color3.fromRGB(80,   50, 120),
+    orange  = Color3.fromRGB(220, 140,  60),
+    orangeD = Color3.fromRGB( 80,  40,  10),
     rage    = Color3.fromRGB(210,  40,  40),
     rageD   = Color3.fromRGB( 50,  10,  10),
     rageH   = Color3.fromRGB(240,  70,  70),
@@ -172,7 +174,7 @@ end
 
 local function serSettings()
     return string.format(
-        '{"spoofKey":"%s","guiKey":"%s","espEnabled":%s,"espR":%d,"espG":%d,"espB":%d,"espBox":%s,"espName":%s,"espHealth":%s,"espDist":%s,"espTracer":%s,"randomDir":%s,"flySpeed":%d,"flyHeight":%d,"fovEnabled":%s,"fovRange":%d,"orbitSpeed":%d,"orbitDistance":%d,"orbitHeight":%d,"orbitReverse":%s,"aimbotEnabled":%s,"aimbotFOV":%d,"aimbotSmooth":%d,"aimbotBone":"%s","aimbotHoldRMB":%s,"silentEnabled":%s,"silentFOV":%d,"silentBone":"%s","ragebotEnabled":%s,"ragebotHitchance":%d,"ragebotBone":"%s","ragebotTargetMode":"%s","ragebotDoubleshot":%s,"ragebotPrediction":%s,"ragebotDelay":%d}',
+        '{"spoofKey":"%s","guiKey":"%s","espEnabled":%s,"espR":%d,"espG":%d,"espB":%d,"espBox":%s,"espName":%s,"espHealth":%s,"espDist":%s,"espTracer":%s,"randomDir":%s,"flySpeed":%d,"flyHeight":%d,"fovEnabled":%s,"fovRange":%d,"orbitSpeed":%d,"orbitDistance":%d,"orbitHeight":%d,"orbitReverse":%s,"aimbotEnabled":%s,"aimbotFOV":%d,"aimbotSmooth":%d,"aimbotBone":"%s","aimbotHoldRMB":%s,"triggerEnabled":%s,"triggerDelay":%d,"triggerFOV":%d,"ragebotEnabled":%s,"ragebotHitchance":%d,"ragebotBone":"%s","ragebotTargetMode":"%s","ragebotDoubleshot":%s,"ragebotPrediction":%s,"ragebotDelay":%d}',
         state.spoofKey.Name, state.guiKey.Name,
         tostring(state.espEnabled),
         state.espR, state.espG, state.espB,
@@ -185,7 +187,7 @@ local function serSettings()
         tostring(state.orbitReverse),
         tostring(state.aimbotEnabled), state.aimbotFOV, state.aimbotSmooth, state.aimbotBone,
         tostring(state.aimbotHoldRMB),
-        tostring(state.silentEnabled), state.silentFOV, state.silentBone,
+        tostring(state.triggerEnabled), state.triggerDelay, state.triggerFOV,
         tostring(state.ragebotEnabled), state.ragebotHitchance, state.ragebotBone,
         state.ragebotTargetMode, tostring(state.ragebotDoubleshot),
         tostring(state.ragebotPrediction), state.ragebotDelay
@@ -856,74 +858,63 @@ local function startRagebot()
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
---  SILENT AIM ENGINE
+--  TRIGGERBOT ENGINE
 -- ════════════════════════════════════════════════════════════════════════════
-local function setupSilentAim()
-    if silentHooked then return end
-    local hooked = false
+local function stopTriggerbot()
+    if triggerConn then triggerConn:Disconnect(); triggerConn = nil end
+    triggerFiring = false
+end
 
-    -- Method 1: hookmetamethod (Synapse / KRNL / Wave)
-    if hookmetamethod and getrawmetatable and getnamecallmethod then
-        pcall(function()
-            local mt    = getrawmetatable(game)
-            local oldNC = mt.__namecall
-            hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod and getnamecallmethod() or ""
-                if state.silentEnabled and (method == "FireServer" or method == "InvokeServer") then
-                    local target = getNearestTarget(state.silentFOV, state.silentBone)
-                    if target and target.Character then
-                        local bone = target.Character:FindFirstChild(state.silentBone)
-                                  or target.Character:FindFirstChild("Head")
-                                  or target.Character:FindFirstChild("HumanoidRootPart")
-                        if bone then
-                            local cam  = workspace.CurrentCamera
-                            local orig = cam.CFrame
-                            cam.CFrame = CFrame.new(orig.Position, bone.Position)
-                            local res  = table.pack(oldNC(self, ...))
-                            cam.CFrame = orig
-                            return table.unpack(res, 1, res.n)
+local function startTriggerbot()
+    stopTriggerbot()
+    triggerConn = RunService.Heartbeat:Connect(function()
+        if not state.triggerEnabled or triggerFiring then return end
+
+        local cam   = workspace.CurrentCamera
+        local mouse = LocalPlayer:GetMouse()
+        local vp    = cam.ViewportSize
+        local center = Vector2.new(vp.X / 2, vp.Y / 2)
+
+        -- Raycast from crosshair
+        local unitRay = cam:ScreenPointToRay(mouse.X, mouse.Y)
+        local params  = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        local lc = LocalPlayer.Character
+        params.FilterDescendantsInstances = lc and {lc} or {}
+        local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
+
+        if result then
+            local model = result.Instance:FindFirstAncestorOfClass("Model")
+            local plr   = model and Players:GetPlayerFromCharacter(model)
+            if plr and plr ~= LocalPlayer then
+                -- FOV gate: target must be within radius of crosshair
+                local hum = model:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 then
+                    local hrp = model:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local sp, onScreen = cam:WorldToViewportPoint(hrp.Position)
+                        if onScreen then
+                            local screenDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                            if screenDist <= state.triggerFOV then
+                                triggerFiring = true
+                                task.delay(math.max(0, state.triggerDelay / 1000), function()
+                                    if state.triggerEnabled then safeFire() end
+                                    triggerFiring = false
+                                end)
+                            end
                         end
                     end
                 end
-                return oldNC(self, ...)
-            end)
-            hooked = true
-        end)
-    end
-
-    -- Method 2: fallback — snap camera on MouseButton1 press/release
-    if not hooked then
-        UserInputService.InputBegan:Connect(function(inp)
-            if not state.silentEnabled then return end
-            if inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-            local target = getNearestTarget(state.silentFOV, state.silentBone)
-            if target and target.Character then
-                local bone = target.Character:FindFirstChild(state.silentBone)
-                          or target.Character:FindFirstChild("Head")
-                          or target.Character:FindFirstChild("HumanoidRootPart")
-                if bone then
-                    local cam = workspace.CurrentCamera
-                    silentOrigCF = cam.CFrame
-                    cam.CFrame = CFrame.new(cam.CFrame.Position, bone.Position)
-                end
             end
-        end)
-        UserInputService.InputEnded:Connect(function(inp)
-            if inp.UserInputType == Enum.UserInputType.MouseButton1 and silentOrigCF then
-                workspace.CurrentCamera.CFrame = silentOrigCF
-                silentOrigCF = nil
-            end
-        end)
-    end
-
-    silentHooked = true
+        end
+    end)
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  CLEANUP
 -- ════════════════════════════════════════════════════════════════════════════
 local function cleanup()
-    stopSpoof(); stopOrbit(); stopFly(); stopNoclip(); stopAimbot(); stopRagebot(); destroyFOVGui()
+    stopSpoof(); stopOrbit(); stopFly(); stopNoclip(); stopAimbot(); stopRagebot(); stopTriggerbot(); destroyFOVGui()
     for name in pairs(espObjects) do removeESP(name) end
     if espFolder and espFolder.Parent then espFolder:Destroy() end
     if guiRef then guiRef:Destroy(); guiRef = nil end
@@ -1184,10 +1175,10 @@ local function buildGUI()
     buildFOVGui(gui)
     if not state.fovEnabled then destroyFOVGui() end
 
-    local W, FH, MH = 340, 520, 44
+    local W, FH, MH = 480, 540, 44
     local minimized=false; local guiVisible=true
 
-    local TABS  = {"Offset","Targets","Orbit","OrbTargets","Fly","Noclip","ESP","Aimbot","Silent","Rage","Settings"}
+    local TABS  = {"Offset","Targets","Orbit","OrbTargets","Fly","Noclip","ESP","Aimbot","Trigger","Rage","Settings"}
     local tabCount = #TABS
 
     -- ── Window frame ──────────────────────────────────────────────────
@@ -1288,10 +1279,10 @@ local function buildGUI()
     local noclipPage       = makePage()
     local espPage          = makePage()
     local aimbotPage       = makePage()
-    local silentPage       = makePage()
+    local triggerPage      = makePage()
     local ragebotPage      = makePage()
     local settingsPage     = makePage()
-    local pages        = {offsetPage, targetPage, orbitPage, orbitTargetPage, flyPage, noclipPage, espPage, aimbotPage, silentPage, ragebotPage, settingsPage}
+    local pages        = {offsetPage, targetPage, orbitPage, orbitTargetPage, flyPage, noclipPage, espPage, aimbotPage, triggerPage, ragebotPage, settingsPage}
     local tabBtns      = {}
 
     local TAB_COLORS = {
@@ -1985,69 +1976,49 @@ local function buildGUI()
     -- ════════════════════════════════════════════════════════════════════
     --  SILENT AIM PAGE
     -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(silentPage,"SILENT AIM",0)
+    sectionLabel(triggerPage,"TRIGGERBOT",0)
 
     -- Banner
-    local saBanner=Instance.new("Frame"); saBanner.Size=UDim2.new(1,0,0,46); saBanner.LayoutOrder=1
-    saBanner.BackgroundColor3=Color3.fromRGB(24,14,36); saBanner.BorderSizePixel=0; saBanner.Parent=silentPage; corner(saBanner,10)
-    local saStroke=Instance.new("UIStroke"); saStroke.Color=T.purple; saStroke.Thickness=1.5; saStroke.Parent=saBanner
-    local saDot=Instance.new("Frame"); saDot.Size=UDim2.new(0,8,0,8); saDot.Position=UDim2.new(0,12,0.5,-4)
-    saDot.BackgroundColor3=T.purple; saDot.BorderSizePixel=0; saDot.Parent=saBanner; corner(saDot,4)
-    local saBannerLbl=Instance.new("TextLabel"); saBannerLbl.Size=UDim2.new(1,-60,1,0); saBannerLbl.Position=UDim2.new(0,28,0,0)
-    saBannerLbl.BackgroundTransparency=1; saBannerLbl.Text="SILENT AIM  ·  Invisible camera snap"
-    saBannerLbl.TextSize=11; saBannerLbl.Font=Enum.Font.GothamBold; saBannerLbl.TextColor3=T.purple
-    saBannerLbl.TextXAlignment=Enum.TextXAlignment.Left; saBannerLbl.Parent=saBanner
+    local tbBanner=Instance.new("Frame"); tbBanner.Size=UDim2.new(1,0,0,46); tbBanner.LayoutOrder=1
+    tbBanner.BackgroundColor3=Color3.fromRGB(28,18,8); tbBanner.BorderSizePixel=0; tbBanner.Parent=triggerPage; corner(tbBanner,10)
+    local tbBannerSt=Instance.new("UIStroke"); tbBannerSt.Color=T.orange; tbBannerSt.Thickness=1.5; tbBannerSt.Parent=tbBanner
+    local tbDot=Instance.new("Frame"); tbDot.Size=UDim2.new(0,8,0,8); tbDot.Position=UDim2.new(0,12,0.5,-4)
+    tbDot.BackgroundColor3=T.orange; tbDot.BorderSizePixel=0; tbDot.Parent=tbBanner; corner(tbDot,4)
+    local tbBannerLbl=Instance.new("TextLabel"); tbBannerLbl.Size=UDim2.new(1,-60,1,0); tbBannerLbl.Position=UDim2.new(0,28,0,0)
+    tbBannerLbl.BackgroundTransparency=1; tbBannerLbl.Text="TRIGGERBOT  ·  Auto-fire on crosshair overlap"
+    tbBannerLbl.TextSize=11; tbBannerLbl.Font=Enum.Font.GothamBold; tbBannerLbl.TextColor3=T.orange
+    tbBannerLbl.TextXAlignment=Enum.TextXAlignment.Left; tbBannerLbl.Parent=tbBanner
 
     -- Info card
-    local saInfo=Instance.new("Frame"); saInfo.Size=UDim2.new(1,0,0,76); saInfo.LayoutOrder=2
-    saInfo.BackgroundColor3=Color3.fromRGB(24,14,36); saInfo.BorderSizePixel=0; saInfo.Parent=silentPage; corner(saInfo,10)
-    local saInfoSt=Instance.new("UIStroke"); saInfoSt.Color=T.purpleD; saInfoSt.Thickness=1; saInfoSt.Parent=saInfo
-    local saInfoLbl=Instance.new("TextLabel"); saInfoLbl.Size=UDim2.new(1,-20,1,0); saInfoLbl.Position=UDim2.new(0,10,0,0)
-    saInfoLbl.BackgroundTransparency=1; saInfoLbl.TextSize=10; saInfoLbl.Font=Enum.Font.Gotham
-    saInfoLbl.TextColor3=Color3.fromRGB(200,170,255); saInfoLbl.TextXAlignment=Enum.TextXAlignment.Left; saInfoLbl.TextWrapped=true
-    saInfoLbl.Text="Snaps your camera to the nearest target invisibly when you shoot, then restores it.\n\nUses hookmetamethod when available; falls back to click-snap on unsupported executors."
-    saInfoLbl.Parent=saInfo
+    local tbInfo=Instance.new("Frame"); tbInfo.Size=UDim2.new(1,0,0,60); tbInfo.LayoutOrder=2
+    tbInfo.BackgroundColor3=Color3.fromRGB(28,18,8); tbInfo.BorderSizePixel=0; tbInfo.Parent=triggerPage; corner(tbInfo,10)
+    local tbInfoSt=Instance.new("UIStroke"); tbInfoSt.Color=Color3.fromRGB(80,40,10); tbInfoSt.Thickness=1; tbInfoSt.Parent=tbInfo
+    local tbInfoLbl=Instance.new("TextLabel"); tbInfoLbl.Size=UDim2.new(1,-20,1,0); tbInfoLbl.Position=UDim2.new(0,10,0,0)
+    tbInfoLbl.BackgroundTransparency=1; tbInfoLbl.TextSize=10; tbInfoLbl.Font=Enum.Font.Gotham
+    tbInfoLbl.TextColor3=T.orange; tbInfoLbl.TextXAlignment=Enum.TextXAlignment.Left; tbInfoLbl.TextWrapped=true
+    tbInfoLbl.Text="Raycasts from your crosshair every frame. If the ray hits a player within the FOV radius, it auto-fires after the set delay."
+    tbInfoLbl.Parent=tbInfo
 
     -- Enable toggle
-    local _saCard, _setSaPill = makeToggleCard(
-        silentPage,"👻  Enable Silent Aim","Redirect shots to nearest target silently",
-        state.silentEnabled, 3, T.purple,
+    local _tbCard, _setTbPill = makeToggleCard(
+        triggerPage,"🔫  Enable Triggerbot","Auto-fires when crosshair overlaps a player",
+        state.triggerEnabled, 3, T.orange,
         function(v)
-            state.silentEnabled = v
-            if v then setupSilentAim() end
+            state.triggerEnabled = v
+            if v then startTriggerbot() else stopTriggerbot() end
             saveAll()
         end
     )
 
-    sectionLabel(silentPage,"SETTINGS",4)
+    sectionLabel(triggerPage,"SETTINGS",4)
 
-    local _,_,setSaFOV = makeSlider(silentPage,"FOV  (px)",10,800,state.silentFOV,
-        function(v) state.silentFOV=v; saveAll() end, T.purple)
+    makeSlider(triggerPage,"FIRE DELAY  (ms)",0,500,state.triggerDelay,
+        function(v) state.triggerDelay=v; saveAll() end, T.orange)
 
-    sectionLabel(silentPage,"TARGET BONE",5)
+    makeSlider(triggerPage,"FOV RADIUS  (px)",1,400,state.triggerFOV,
+        function(v) state.triggerFOV=v; saveAll() end, T.orange)
 
-    -- Bone cycle card
-    local saBoneOptions = {"Head","UpperTorso","HumanoidRootPart","Torso","LowerTorso"}
-    local saBoneCard=Instance.new("Frame"); saBoneCard.Size=UDim2.new(1,0,0,44); saBoneCard.LayoutOrder=6
-    saBoneCard.BackgroundColor3=T.card; saBoneCard.BorderSizePixel=0; saBoneCard.Parent=silentPage; corner(saBoneCard,10)
-    local saBoneCardSt=Instance.new("UIStroke"); saBoneCardSt.Color=T.border; saBoneCardSt.Thickness=1; saBoneCardSt.Parent=saBoneCard
-    local saBoneLbl=Instance.new("TextLabel"); saBoneLbl.Size=UDim2.new(1,-110,1,0); saBoneLbl.Position=UDim2.new(0,12,0,0)
-    saBoneLbl.BackgroundTransparency=1; saBoneLbl.Text="Aim Bone"; saBoneLbl.TextSize=12; saBoneLbl.Font=Enum.Font.Gotham
-    saBoneLbl.TextColor3=T.text; saBoneLbl.TextXAlignment=Enum.TextXAlignment.Left; saBoneLbl.Parent=saBoneCard
-    local saBoneBtn=Instance.new("TextButton"); saBoneBtn.Size=UDim2.new(0,110,0,28); saBoneBtn.Position=UDim2.new(1,-118,0.5,-14)
-    saBoneBtn.BackgroundColor3=T.surface; saBoneBtn.BorderSizePixel=0; saBoneBtn.Text=state.silentBone
-    saBoneBtn.TextSize=11; saBoneBtn.Font=Enum.Font.GothamBold; saBoneBtn.TextColor3=T.purple
-    saBoneBtn.AutoButtonColor=false; saBoneBtn.Parent=saBoneCard; corner(saBoneBtn,6)
-    local saBoneSt=Instance.new("UIStroke"); saBoneSt.Color=T.purpleD; saBoneSt.Thickness=1; saBoneSt.Parent=saBoneBtn
-    saBoneBtn.MouseButton1Click:Connect(function()
-        local cur=state.silentBone; local idx=1
-        for i,v in ipairs(saBoneOptions) do if v==cur then idx=i; break end end
-        idx=(idx % #saBoneOptions)+1; state.silentBone=saBoneOptions[idx]; saBoneBtn.Text=saBoneOptions[idx]; saveAll()
-    end)
-    saBoneCard.MouseEnter:Connect(function() tw(saBoneCard,{BackgroundColor3=T.cardH}) end)
-    saBoneCard.MouseLeave:Connect(function() tw(saBoneCard,{BackgroundColor3=T.card}) end)
-
-    -- ════════════════════════════════════════════════════════════════════
+        -- ════════════════════════════════════════════════════════════════════
     --  RAGEBOT PAGE
     -- ════════════════════════════════════════════════════════════════════
     sectionLabel(ragebotPage,"RAGEBOT",0)
@@ -2378,8 +2349,8 @@ local function init()
     if state.flyEnabled     then startFly()     end
     if state.noclipEnabled  then startNoclip()  end
     if state.aimbotEnabled  then startAimbot()  end
-    if state.silentEnabled  then setupSilentAim() end
-    if state.ragebotEnabled then startRagebot()  end
+    if state.triggerEnabled then startTriggerbot() end
+    if state.ragebotEnabled then startRagebot()   end
 end
 
 init()
