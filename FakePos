@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════════════════════
---  Fake Position Spoof  ·  Matcha UI  ·  v8.0
+--  Fake Position Spoof  ·  Matcha UI  ·  v9.0
 --  ✦ Title-bar drag only
 --  ✦ X / Y / Z slider + inline type-to-edit  (range ±150,000)
 --  ✦ Per-slider reset buttons on every property
@@ -15,7 +15,7 @@
 --  ✦ Persistent spoofKey + guiKey + esp settings
 --  ✦ Unified save file with settings + presets blocks
 --  ✦ Faraway + Origin presets
---  ✦ Player search on Targets + OrbTargets tabs          [NEW v8]
+--  ✦ Player search on Targets + OrbTargets tabs          [NEW v9]
 -- ════════════════════════════════════════════════════════════════════════════
 
 local Players          = game:GetService("Players")
@@ -24,6 +24,42 @@ local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
+
+-- ─── Safe executor wrappers ───────────────────────────────────────────────
+local function safeFire()
+    if type(mouse1click) == "function" then
+        pcall(mouse1click)
+    elseif type(mouse1press) == "function" then
+        pcall(mouse1press)
+        task.wait(0.01)
+        if type(mouse1release) == "function" then pcall(mouse1release) end
+    end
+end
+
+-- ─── Nearest-target helper ────────────────────────────────────────────────
+local function getNearestTarget(fovLimit, boneName)
+    local cam    = workspace.CurrentCamera
+    local vp     = cam.ViewportSize
+    local center = Vector2.new(vp.X / 2, vp.Y / 2)
+    local best, bestDist = nil, fovLimit or math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local bone = p.Character:FindFirstChild(boneName or "Head")
+                          or p.Character:FindFirstChild("HumanoidRootPart")
+                if bone then
+                    local sp, onScreen = cam:WorldToViewportPoint(bone.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                        if dist < bestDist then best = p; bestDist = dist end
+                    end
+                end
+            end
+        end
+    end
+    return best
+end
 
 local SAVE_FILE = "FakePosPresets.json"
 
@@ -61,6 +97,16 @@ local state = {
     flyHeight   = 10,
     -- Noclip
     noclipEnabled = false,
+    -- Aimbot
+    aimbotEnabled = false,
+    aimbotFOV     = 120,
+    aimbotSmooth  = 10,
+    aimbotBone    = "Head",
+    aimbotHoldRMB = true,
+    -- Silent Aim
+    silentEnabled = false,
+    silentFOV     = 200,
+    silentBone    = "Head",
     -- FOV Visualizer
     fovEnabled  = false,
     fovRange    = 60,
@@ -73,6 +119,9 @@ local spoofConn        = nil
 local orbitConn        = nil
 local flyConn          = nil
 local noclipConn       = nil
+local aimbotConn       = nil
+local silentHooked     = false
+local silentOrigCF     = nil
 local guiRef           = nil
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -110,7 +159,7 @@ end
 
 local function serSettings()
     return string.format(
-        '{"spoofKey":"%s","guiKey":"%s","espEnabled":%s,"espR":%d,"espG":%d,"espB":%d,"espBox":%s,"espName":%s,"espHealth":%s,"espDist":%s,"espTracer":%s,"randomDir":%s,"flySpeed":%d,"flyHeight":%d,"fovEnabled":%s,"fovRange":%d,"orbitSpeed":%d,"orbitDistance":%d,"orbitHeight":%d,"orbitReverse":%s}',
+        '{"spoofKey":"%s","guiKey":"%s","espEnabled":%s,"espR":%d,"espG":%d,"espB":%d,"espBox":%s,"espName":%s,"espHealth":%s,"espDist":%s,"espTracer":%s,"randomDir":%s,"flySpeed":%d,"flyHeight":%d,"fovEnabled":%s,"fovRange":%d,"orbitSpeed":%d,"orbitDistance":%d,"orbitHeight":%d,"orbitReverse":%s,"aimbotEnabled":%s,"aimbotFOV":%d,"aimbotSmooth":%d,"aimbotBone":"%s","aimbotHoldRMB":%s,"silentEnabled":%s,"silentFOV":%d,"silentBone":"%s"}',
         state.spoofKey.Name, state.guiKey.Name,
         tostring(state.espEnabled),
         state.espR, state.espG, state.espB,
@@ -120,7 +169,10 @@ local function serSettings()
         state.flySpeed, state.flyHeight,
         tostring(state.fovEnabled), state.fovRange,
         state.orbitSpeed, state.orbitDistance, state.orbitHeight,
-        tostring(state.orbitReverse)
+        tostring(state.orbitReverse),
+        tostring(state.aimbotEnabled), state.aimbotFOV, state.aimbotSmooth, state.aimbotBone,
+        tostring(state.aimbotHoldRMB),
+        tostring(state.silentEnabled), state.silentFOV, state.silentBone
     )
 end
 
@@ -657,10 +709,101 @@ Players.PlayerRemoving:Connect(function(plr)
 end)
 
 -- ════════════════════════════════════════════════════════════════════════════
+--  AIMBOT ENGINE
+-- ════════════════════════════════════════════════════════════════════════════
+local function stopAimbot()
+    if aimbotConn then aimbotConn:Disconnect(); aimbotConn = nil end
+end
+
+local function startAimbot()
+    stopAimbot()
+    aimbotConn = RunService.RenderStepped:Connect(function()
+        if not state.aimbotEnabled then return end
+        if state.aimbotHoldRMB then
+            if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then return end
+        end
+        local cam    = workspace.CurrentCamera
+        local target = getNearestTarget(state.aimbotFOV, state.aimbotBone)
+        if not target or not target.Character then return end
+        local bone = target.Character:FindFirstChild(state.aimbotBone)
+                  or target.Character:FindFirstChild("Head")
+                  or target.Character:FindFirstChild("HumanoidRootPart")
+        if not bone then return end
+        local smooth = math.max(1, state.aimbotSmooth)
+        local newCF  = CFrame.new(cam.CFrame.Position, bone.Position)
+        cam.CFrame   = cam.CFrame:Lerp(newCF, 1 / smooth)
+    end)
+end
+
+-- ════════════════════════════════════════════════════════════════════════════
+--  SILENT AIM ENGINE
+-- ════════════════════════════════════════════════════════════════════════════
+local function setupSilentAim()
+    if silentHooked then return end
+    local hooked = false
+
+    -- Method 1: hookmetamethod (Synapse / KRNL / Wave)
+    if hookmetamethod and getrawmetatable and getnamecallmethod then
+        pcall(function()
+            local mt    = getrawmetatable(game)
+            local oldNC = mt.__namecall
+            hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod and getnamecallmethod() or ""
+                if state.silentEnabled and (method == "FireServer" or method == "InvokeServer") then
+                    local target = getNearestTarget(state.silentFOV, state.silentBone)
+                    if target and target.Character then
+                        local bone = target.Character:FindFirstChild(state.silentBone)
+                                  or target.Character:FindFirstChild("Head")
+                                  or target.Character:FindFirstChild("HumanoidRootPart")
+                        if bone then
+                            local cam  = workspace.CurrentCamera
+                            local orig = cam.CFrame
+                            cam.CFrame = CFrame.new(orig.Position, bone.Position)
+                            local res  = table.pack(oldNC(self, ...))
+                            cam.CFrame = orig
+                            return table.unpack(res, 1, res.n)
+                        end
+                    end
+                end
+                return oldNC(self, ...)
+            end)
+            hooked = true
+        end)
+    end
+
+    -- Method 2: fallback — snap camera on MouseButton1 press/release
+    if not hooked then
+        UserInputService.InputBegan:Connect(function(inp)
+            if not state.silentEnabled then return end
+            if inp.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+            local target = getNearestTarget(state.silentFOV, state.silentBone)
+            if target and target.Character then
+                local bone = target.Character:FindFirstChild(state.silentBone)
+                          or target.Character:FindFirstChild("Head")
+                          or target.Character:FindFirstChild("HumanoidRootPart")
+                if bone then
+                    local cam = workspace.CurrentCamera
+                    silentOrigCF = cam.CFrame
+                    cam.CFrame = CFrame.new(cam.CFrame.Position, bone.Position)
+                end
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.MouseButton1 and silentOrigCF then
+                workspace.CurrentCamera.CFrame = silentOrigCF
+                silentOrigCF = nil
+            end
+        end)
+    end
+
+    silentHooked = true
+end
+
+-- ════════════════════════════════════════════════════════════════════════════
 --  CLEANUP
 -- ════════════════════════════════════════════════════════════════════════════
 local function cleanup()
-    stopSpoof(); stopOrbit(); stopFly(); stopNoclip(); destroyFOVGui()
+    stopSpoof(); stopOrbit(); stopFly(); stopNoclip(); stopAimbot(); destroyFOVGui()
     for name in pairs(espObjects) do removeESP(name) end
     if espFolder and espFolder.Parent then espFolder:Destroy() end
     if guiRef then guiRef:Destroy(); guiRef = nil end
@@ -924,7 +1067,7 @@ local function buildGUI()
     local W, FH, MH = 340, 520, 44
     local minimized=false; local guiVisible=true
 
-    local TABS  = {"Offset","Targets","Orbit","OrbTargets","Fly","Noclip","ESP","Settings"}
+    local TABS  = {"Offset","Targets","Orbit","OrbTargets","Fly","Noclip","ESP","Aimbot","Silent","Settings"}
     local tabCount = #TABS
 
     -- ── Window frame ──────────────────────────────────────────────────
@@ -1024,12 +1167,15 @@ local function buildGUI()
     local flyPage          = makePage()
     local noclipPage       = makePage()
     local espPage          = makePage()
+    local aimbotPage       = makePage()
+    local silentPage       = makePage()
     local settingsPage     = makePage()
-    local pages        = {offsetPage, targetPage, orbitPage, orbitTargetPage, flyPage, noclipPage, espPage, settingsPage}
+    local pages        = {offsetPage, targetPage, orbitPage, orbitTargetPage, flyPage, noclipPage, espPage, aimbotPage, silentPage, settingsPage}
     local tabBtns      = {}
 
     local TAB_COLORS = {
-        T.accent, T.accent, T.red, T.red, T.blue, T.purple, T.yellow, T.sub
+        T.accent, T.accent, T.red, T.red, T.blue, T.purple, T.yellow,
+        T.blue, T.purple, T.sub
     }
 
     local function switchTab(idx)
@@ -1651,6 +1797,136 @@ local function buildGUI()
     end
 
     -- ════════════════════════════════════════════════════════════════════
+    --  AIMBOT PAGE
+    -- ════════════════════════════════════════════════════════════════════
+    sectionLabel(aimbotPage,"AIMBOT",0)
+
+    -- Banner
+    local abBanner=Instance.new("Frame"); abBanner.Size=UDim2.new(1,0,0,46); abBanner.LayoutOrder=1
+    abBanner.BackgroundColor3=Color3.fromRGB(14,22,36); abBanner.BorderSizePixel=0; abBanner.Parent=aimbotPage; corner(abBanner,10)
+    local abStroke=Instance.new("UIStroke"); abStroke.Color=T.blue; abStroke.Thickness=1.5; abStroke.Parent=abBanner
+    local abDot=Instance.new("Frame"); abDot.Size=UDim2.new(0,8,0,8); abDot.Position=UDim2.new(0,12,0.5,-4)
+    abDot.BackgroundColor3=T.blue; abDot.BorderSizePixel=0; abDot.Parent=abBanner; corner(abDot,4)
+    local abBannerLbl=Instance.new("TextLabel"); abBannerLbl.Size=UDim2.new(1,-60,1,0); abBannerLbl.Position=UDim2.new(0,28,0,0)
+    abBannerLbl.BackgroundTransparency=1; abBannerLbl.Text="AIMBOT  ·  Hold RMB to lock-on"
+    abBannerLbl.TextSize=11; abBannerLbl.Font=Enum.Font.GothamBold; abBannerLbl.TextColor3=T.blue
+    abBannerLbl.TextXAlignment=Enum.TextXAlignment.Left; abBannerLbl.Parent=abBanner
+
+    -- Enable toggle
+    local _abCard, _setAbPill = makeToggleCard(
+        aimbotPage,"🎯  Enable Aimbot","Smooth camera lock-on to nearest player",
+        state.aimbotEnabled, 2, T.blue,
+        function(v)
+            state.aimbotEnabled = v
+            if v then startAimbot() else stopAimbot() end
+            saveAll()
+        end
+    )
+
+    -- Hold RMB toggle
+    local _abRMBCard, _setAbRMBPill = makeToggleCard(
+        aimbotPage,"🖱  Hold RMB to Activate","Only aim when Right Mouse Button is held",
+        state.aimbotHoldRMB, 3, T.blue,
+        function(v) state.aimbotHoldRMB = v; saveAll() end
+    )
+
+    sectionLabel(aimbotPage,"SETTINGS",4)
+
+    local _,_,setAbFOV = makeSlider(aimbotPage,"FOV  (px)",10,800,state.aimbotFOV,
+        function(v) state.aimbotFOV=v; saveAll() end, T.blue)
+
+    local _,_,setAbSmooth = makeSlider(aimbotPage,"SMOOTHNESS",1,50,state.aimbotSmooth,
+        function(v) state.aimbotSmooth=v; saveAll() end, T.blue)
+
+    sectionLabel(aimbotPage,"TARGET BONE",5)
+
+    -- Bone cycle card
+    local abBoneOptions = {"Head","UpperTorso","HumanoidRootPart","Torso","LowerTorso"}
+    local abBoneCard=Instance.new("Frame"); abBoneCard.Size=UDim2.new(1,0,0,44); abBoneCard.LayoutOrder=6
+    abBoneCard.BackgroundColor3=T.card; abBoneCard.BorderSizePixel=0; abBoneCard.Parent=aimbotPage; corner(abBoneCard,10)
+    local abStrokeC=Instance.new("UIStroke"); abStrokeC.Color=T.border; abStrokeC.Thickness=1; abStrokeC.Parent=abBoneCard
+    local abBoneLbl=Instance.new("TextLabel"); abBoneLbl.Size=UDim2.new(1,-110,1,0); abBoneLbl.Position=UDim2.new(0,12,0,0)
+    abBoneLbl.BackgroundTransparency=1; abBoneLbl.Text="Aim Bone"; abBoneLbl.TextSize=12; abBoneLbl.Font=Enum.Font.Gotham
+    abBoneLbl.TextColor3=T.text; abBoneLbl.TextXAlignment=Enum.TextXAlignment.Left; abBoneLbl.Parent=abBoneCard
+    local abBoneBtn=Instance.new("TextButton"); abBoneBtn.Size=UDim2.new(0,110,0,28); abBoneBtn.Position=UDim2.new(1,-118,0.5,-14)
+    abBoneBtn.BackgroundColor3=T.surface; abBoneBtn.BorderSizePixel=0; abBoneBtn.Text=state.aimbotBone
+    abBoneBtn.TextSize=11; abBoneBtn.Font=Enum.Font.GothamBold; abBoneBtn.TextColor3=T.blue
+    abBoneBtn.AutoButtonColor=false; abBoneBtn.Parent=abBoneCard; corner(abBoneBtn,6)
+    local abBoneSt=Instance.new("UIStroke"); abBoneSt.Color=T.blueD; abBoneSt.Thickness=1; abBoneSt.Parent=abBoneBtn
+    abBoneBtn.MouseButton1Click:Connect(function()
+        local cur=state.aimbotBone; local idx=1
+        for i,v in ipairs(abBoneOptions) do if v==cur then idx=i; break end end
+        idx=(idx % #abBoneOptions)+1; state.aimbotBone=abBoneOptions[idx]; abBoneBtn.Text=abBoneOptions[idx]; saveAll()
+    end)
+    abBoneCard.MouseEnter:Connect(function() tw(abBoneCard,{BackgroundColor3=T.cardH}) end)
+    abBoneCard.MouseLeave:Connect(function() tw(abBoneCard,{BackgroundColor3=T.card}) end)
+
+    -- ════════════════════════════════════════════════════════════════════
+    --  SILENT AIM PAGE
+    -- ════════════════════════════════════════════════════════════════════
+    sectionLabel(silentPage,"SILENT AIM",0)
+
+    -- Banner
+    local saBanner=Instance.new("Frame"); saBanner.Size=UDim2.new(1,0,0,46); saBanner.LayoutOrder=1
+    saBanner.BackgroundColor3=Color3.fromRGB(24,14,36); saBanner.BorderSizePixel=0; saBanner.Parent=silentPage; corner(saBanner,10)
+    local saStroke=Instance.new("UIStroke"); saStroke.Color=T.purple; saStroke.Thickness=1.5; saStroke.Parent=saBanner
+    local saDot=Instance.new("Frame"); saDot.Size=UDim2.new(0,8,0,8); saDot.Position=UDim2.new(0,12,0.5,-4)
+    saDot.BackgroundColor3=T.purple; saDot.BorderSizePixel=0; saDot.Parent=saBanner; corner(saDot,4)
+    local saBannerLbl=Instance.new("TextLabel"); saBannerLbl.Size=UDim2.new(1,-60,1,0); saBannerLbl.Position=UDim2.new(0,28,0,0)
+    saBannerLbl.BackgroundTransparency=1; saBannerLbl.Text="SILENT AIM  ·  Invisible camera snap"
+    saBannerLbl.TextSize=11; saBannerLbl.Font=Enum.Font.GothamBold; saBannerLbl.TextColor3=T.purple
+    saBannerLbl.TextXAlignment=Enum.TextXAlignment.Left; saBannerLbl.Parent=saBanner
+
+    -- Info card
+    local saInfo=Instance.new("Frame"); saInfo.Size=UDim2.new(1,0,0,76); saInfo.LayoutOrder=2
+    saInfo.BackgroundColor3=Color3.fromRGB(24,14,36); saInfo.BorderSizePixel=0; saInfo.Parent=silentPage; corner(saInfo,10)
+    local saInfoSt=Instance.new("UIStroke"); saInfoSt.Color=T.purpleD; saInfoSt.Thickness=1; saInfoSt.Parent=saInfo
+    local saInfoLbl=Instance.new("TextLabel"); saInfoLbl.Size=UDim2.new(1,-20,1,0); saInfoLbl.Position=UDim2.new(0,10,0,0)
+    saInfoLbl.BackgroundTransparency=1; saInfoLbl.TextSize=10; saInfoLbl.Font=Enum.Font.Gotham
+    saInfoLbl.TextColor3=Color3.fromRGB(200,170,255); saInfoLbl.TextXAlignment=Enum.TextXAlignment.Left; saInfoLbl.TextWrapped=true
+    saInfoLbl.Text="Snaps your camera to the nearest target invisibly when you shoot, then restores it.\n\nUses hookmetamethod when available; falls back to click-snap on unsupported executors."
+    saInfoLbl.Parent=saInfo
+
+    -- Enable toggle
+    local _saCard, _setSaPill = makeToggleCard(
+        silentPage,"👻  Enable Silent Aim","Redirect shots to nearest target silently",
+        state.silentEnabled, 3, T.purple,
+        function(v)
+            state.silentEnabled = v
+            if v then setupSilentAim() end
+            saveAll()
+        end
+    )
+
+    sectionLabel(silentPage,"SETTINGS",4)
+
+    local _,_,setSaFOV = makeSlider(silentPage,"FOV  (px)",10,800,state.silentFOV,
+        function(v) state.silentFOV=v; saveAll() end, T.purple)
+
+    sectionLabel(silentPage,"TARGET BONE",5)
+
+    -- Bone cycle card
+    local saBoneOptions = {"Head","UpperTorso","HumanoidRootPart","Torso","LowerTorso"}
+    local saBoneCard=Instance.new("Frame"); saBoneCard.Size=UDim2.new(1,0,0,44); saBoneCard.LayoutOrder=6
+    saBoneCard.BackgroundColor3=T.card; saBoneCard.BorderSizePixel=0; saBoneCard.Parent=silentPage; corner(saBoneCard,10)
+    local saBoneCardSt=Instance.new("UIStroke"); saBoneCardSt.Color=T.border; saBoneCardSt.Thickness=1; saBoneCardSt.Parent=saBoneCard
+    local saBoneLbl=Instance.new("TextLabel"); saBoneLbl.Size=UDim2.new(1,-110,1,0); saBoneLbl.Position=UDim2.new(0,12,0,0)
+    saBoneLbl.BackgroundTransparency=1; saBoneLbl.Text="Aim Bone"; saBoneLbl.TextSize=12; saBoneLbl.Font=Enum.Font.Gotham
+    saBoneLbl.TextColor3=T.text; saBoneLbl.TextXAlignment=Enum.TextXAlignment.Left; saBoneLbl.Parent=saBoneCard
+    local saBoneBtn=Instance.new("TextButton"); saBoneBtn.Size=UDim2.new(0,110,0,28); saBoneBtn.Position=UDim2.new(1,-118,0.5,-14)
+    saBoneBtn.BackgroundColor3=T.surface; saBoneBtn.BorderSizePixel=0; saBoneBtn.Text=state.silentBone
+    saBoneBtn.TextSize=11; saBoneBtn.Font=Enum.Font.GothamBold; saBoneBtn.TextColor3=T.purple
+    saBoneBtn.AutoButtonColor=false; saBoneBtn.Parent=saBoneCard; corner(saBoneBtn,6)
+    local saBoneSt=Instance.new("UIStroke"); saBoneSt.Color=T.purpleD; saBoneSt.Thickness=1; saBoneSt.Parent=saBoneBtn
+    saBoneBtn.MouseButton1Click:Connect(function()
+        local cur=state.silentBone; local idx=1
+        for i,v in ipairs(saBoneOptions) do if v==cur then idx=i; break end end
+        idx=(idx % #saBoneOptions)+1; state.silentBone=saBoneOptions[idx]; saBoneBtn.Text=saBoneOptions[idx]; saveAll()
+    end)
+    saBoneCard.MouseEnter:Connect(function() tw(saBoneCard,{BackgroundColor3=T.cardH}) end)
+    saBoneCard.MouseLeave:Connect(function() tw(saBoneCard,{BackgroundColor3=T.card}) end)
+
+    -- ════════════════════════════════════════════════════════════════════
     --  SETTINGS PAGE
     -- ════════════════════════════════════════════════════════════════════
     sectionLabel(settingsPage,"KEYBINDS",0)
@@ -1859,9 +2135,11 @@ end
 local function init()
     cleanup(); buildGUI()
     state.enabled=true; startSpoof()
-    if state.orbitEnabled   then startOrbit()  end
-    if state.flyEnabled     then startFly()    end
-    if state.noclipEnabled  then startNoclip() end
+    if state.orbitEnabled   then startOrbit()   end
+    if state.flyEnabled     then startFly()     end
+    if state.noclipEnabled  then startNoclip()  end
+    if state.aimbotEnabled  then startAimbot()  end
+    if state.silentEnabled  then setupSilentAim() end
 end
 
 init()
