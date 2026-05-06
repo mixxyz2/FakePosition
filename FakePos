@@ -1,21 +1,11 @@
 -- ════════════════════════════════════════════════════════════════════════════
---  Fake Position Spoof  ·  Matcha UI  ·  v11.0
---  ✦ Title-bar drag only
---  ✦ X / Y / Z slider + inline type-to-edit  (range ±150,000)
---  ✦ Per-slider reset buttons on every property
---  ✦ Orbit tab — speed, distance, height, random direction
---  ✦ Separate Orbit Targets tab (independent targeting)
---  ✦ Stick to You mode — spoof tracks your real position
---  ✦ Fly tab — speed + height controls
---  ✦ Noclip tab + Ghost Mode enable/disable
---  ✦ FOV Visualizer overlay
---  ✦ Moveable mobile toggle button
---  ✦ Changeable open/close keybind (Settings tab)
---  ✦ ESP / highlight overlay for ALL players
---  ✦ Persistent spoofKey + guiKey + esp settings
---  ✦ Unified save file with settings + presets blocks
---  ✦ Faraway + Origin presets
---  ✦ Player search on Targets + OrbTargets tabs          [NEW v11]
+--  Fake Position Spoof  ·  Clean Edition
+--  ✦ Offset tab  (X/Y/Z ±150 000, random dir, stick mode)
+--  ✦ Targets tab  (per-player targeting + search)
+--  ✦ Settings tab  (keybinds, presets, file info)
+--  ✦ Collision fix  (own character always has normal collision)
+--  ✦ Mobile-only right-side panel  (Toggle UI / Lock UI buttons)
+--  ✦ Removed: Orbit, OrbTargets, Fly, Noclip, ESP, Aimbot, Ragebot
 -- ════════════════════════════════════════════════════════════════════════════
 
 local Players          = game:GetService("Players")
@@ -23,116 +13,31 @@ local RunService       = game:GetService("RunService")
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local LocalPlayer      = Players.LocalPlayer
-local Camera           = workspace.CurrentCamera
 
--- ─── Safe executor wrappers ───────────────────────────────────────────────
-local function safeFire()
-    if type(mouse1click) == "function" then
-        pcall(mouse1click)
-    elseif type(mouse1press) == "function" then
-        pcall(mouse1press)
-        task.wait(0.01)
-        if type(mouse1release) == "function" then pcall(mouse1release) end
-    end
-end
-
--- ─── Nearest-target helper ────────────────────────────────────────────────
-local function getNearestTarget(fovLimit, boneName)
-    local cam    = workspace.CurrentCamera
-    local vp     = cam.ViewportSize
-    local center = Vector2.new(vp.X / 2, vp.Y / 2)
-    local best, bestDist = nil, fovLimit or math.huge
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character then
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local bone = p.Character:FindFirstChild(boneName or "Head")
-                          or p.Character:FindFirstChild("HumanoidRootPart")
-                if bone then
-                    local sp, onScreen = cam:WorldToViewportPoint(bone.Position)
-                    if onScreen then
-                        local dist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                        if dist < bestDist then best = p; bestDist = dist end
-                    end
-                end
-            end
-        end
-    end
-    return best
-end
-
-local SAVE_FILE = "FakePosPresets.json"
+local SAVE_FILE = "FakePosClean.json"
 
 -- ── State ─────────────────────────────────────────────────────────────────
 local state = {
     x = 0, y = 1000, z = 0,
-    enabled    = false,
-    targetAll  = true,
-    spoofKey   = Enum.KeyCode.RightControl,
-    guiKey     = Enum.KeyCode.RightShift,
-    -- Orbit
-    orbitEnabled  = false,
-    orbitReverse  = false,
-    orbitSpeed    = 1,
-    orbitDistance = 20,
-    orbitHeight   = 0,
-    orbitAngle    = 0,
-    -- Random orbit direction
-    randomDir  = false,
+    enabled      = false,
+    targetAll    = true,
+    stickEnabled = false,
+    randomDir    = false,
     randomDirTimer = 0,
     randomDirVec   = Vector3.new(0, 1, 0),
-    -- Stick to player
-    stickEnabled = false,
-    -- ESP
-    espEnabled = true,
-    espR = 122, espG = 186, espB = 136,
-    espBox     = true,
-    espName    = true,
-    espHealth  = true,
-    espDist    = true,
-    espTracer  = false,
-    -- Fly
-    flyEnabled  = false,
-    flySpeed    = 50,
-    flyHeight   = 10,
-    -- Noclip
-    noclipEnabled = false,
-    -- Aimbot
-    aimbotEnabled = false,
-    aimbotFOV     = 120,
-    aimbotSmooth  = 10,
-    aimbotBone    = "Head",
-    aimbotHoldRMB = true,
-    -- Triggerbot
-    triggerEnabled = false,
-    triggerDelay   = 80,
-    triggerFOV     = 60,
-    -- Ragebot
-    ragebotEnabled    = false,
-    ragebotHitchance  = 100,
-    ragebotBone       = "Head",
-    ragebotTargetMode = "Closest",
-    ragebotDoubleshot = false,
-    ragebotPrediction = false,
-    ragebotDelay      = 80,
+    spoofKey = Enum.KeyCode.RightControl,
+    guiKey   = Enum.KeyCode.RightShift,
     -- FOV Visualizer
-    fovEnabled  = false,
-    fovRange    = 60,
+    fovEnabled = false,
+    fovRange   = 60,
 }
-local targeted         = {}
-local orbitTargeted    = {}
-local customPresets    = {}
-local settingsPresets  = {}
-local spoofConn        = nil
-local orbitConn        = nil
-local flyConn          = nil
-local noclipConn       = nil
-local aimbotConn       = nil
-local ragebotConn      = nil
-local ragebotFiring    = false
-local triggerConn      = nil
-local triggerFiring    = false
-local guiRef           = nil
+
+local targeted     = {}
+local customPresets= {}
+local spoofConn    = nil
+local guiRef       = nil
+local guiLocked    = false   -- for Lock UI mobile button
+local spoofBasePos = Vector3.zero
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  THEME
@@ -152,155 +57,54 @@ local T = {
     redH    = Color3.fromRGB(218,  82,  82),
     yellow  = Color3.fromRGB(215, 185,  55),
     inputBG = Color3.fromRGB(35,  35,  35),
-    hpGreen = Color3.fromRGB(90,  200, 110),
-    hpRed   = Color3.fromRGB(200,  70,  70),
-    blue    = Color3.fromRGB(80,  148, 228),
-    blueD   = Color3.fromRGB(40,   80, 140),
-    purple  = Color3.fromRGB(160, 100, 220),
-    purpleD = Color3.fromRGB(80,   50, 120),
-    orange  = Color3.fromRGB(220, 140,  60),
-    orangeD = Color3.fromRGB( 80,  40,  10),
-    rage    = Color3.fromRGB(210,  40,  40),
-    rageD   = Color3.fromRGB( 50,  10,  10),
-    rageH   = Color3.fromRGB(240,  70,  70),
 }
+
+-- ════════════════════════════════════════════════════════════════════════════
+--  COLLISION FIX
+--  Ensure the LOCAL player's character parts always have normal collision.
+--  This runs every Stepped frame and is the authoritative fix — nothing in
+--  this script touches other players' CanCollide, so they are unaffected.
+-- ════════════════════════════════════════════════════════════════════════════
+RunService.Stepped:Connect(function()
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, p in ipairs(char:GetDescendants()) do
+        if p:IsA("BasePart") and not p.CanCollide then
+            -- Only restore if it was we who disabled it (no external scripts assumed)
+            -- We never disable our own collision in this script, so anything
+            -- false here was set by a prior noclip remnant — restore it.
+            p.CanCollide = true
+        end
+    end
+end)
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  PERSISTENCE
 -- ════════════════════════════════════════════════════════════════════════════
-local function escStr(s)
-    return tostring(s):gsub('"', '\\"')
-end
+local function escStr(s) return tostring(s):gsub('"', '\\"') end
+local function jsonNum(src, key) return tonumber(src:match('"'..key..'":([%-]?%d+)')) end
+local function jsonStr(src, key) return src:match('"'..key..'":"([^"]*)"') end
 
 local function serSettings()
     return string.format(
-        '{"spoofKey":"%s","guiKey":"%s","espEnabled":%s,"espR":%d,"espG":%d,"espB":%d,"espBox":%s,"espName":%s,"espHealth":%s,"espDist":%s,"espTracer":%s,"randomDir":%s,"flySpeed":%d,"flyHeight":%d,"fovEnabled":%s,"fovRange":%d,"orbitSpeed":%d,"orbitDistance":%d,"orbitHeight":%d,"orbitReverse":%s,"aimbotEnabled":%s,"aimbotFOV":%d,"aimbotSmooth":%d,"aimbotBone":"%s","aimbotHoldRMB":%s,"triggerEnabled":%s,"triggerDelay":%d,"triggerFOV":%d,"ragebotEnabled":%s,"ragebotHitchance":%d,"ragebotBone":"%s","ragebotTargetMode":"%s","ragebotDoubleshot":%s,"ragebotPrediction":%s,"ragebotDelay":%d}',
+        '{"spoofKey":"%s","guiKey":"%s","stickEnabled":%s,"randomDir":%s,"fovEnabled":%s,"fovRange":%d}',
         state.spoofKey.Name, state.guiKey.Name,
-        tostring(state.espEnabled),
-        state.espR, state.espG, state.espB,
-        tostring(state.espBox), tostring(state.espName),
-        tostring(state.espHealth), tostring(state.espDist),
-        tostring(state.espTracer), tostring(state.randomDir),
-        state.flySpeed, state.flyHeight,
-        tostring(state.fovEnabled), state.fovRange,
-        state.orbitSpeed, state.orbitDistance, state.orbitHeight,
-        tostring(state.orbitReverse),
-        tostring(state.aimbotEnabled), state.aimbotFOV, state.aimbotSmooth, state.aimbotBone,
-        tostring(state.aimbotHoldRMB),
-        tostring(state.triggerEnabled), state.triggerDelay, state.triggerFOV,
-        tostring(state.ragebotEnabled), state.ragebotHitchance, state.ragebotBone,
-        state.ragebotTargetMode, tostring(state.ragebotDoubleshot),
-        tostring(state.ragebotPrediction), state.ragebotDelay
+        tostring(state.stickEnabled), tostring(state.randomDir),
+        tostring(state.fovEnabled), state.fovRange
     )
 end
 
-local function serPresets(t)
+local function serPresets()
     local p = {}
-    for _, v in ipairs(t) do
+    for _, v in ipairs(customPresets) do
         p[#p+1] = string.format('{"name":"%s","x":%s,"y":%s,"z":%s}',
             escStr(v.name), v.x, v.y, v.z)
     end
     return "[" .. table.concat(p, ",") .. "]"
 end
 
-local function serSettingsPresets(t)
-    local p = {}
-    for _, v in ipairs(t) do
-        p[#p+1] = string.format(
-            '{"name":"%s","spoofKey":"%s","guiKey":"%s","espEnabled":%s,"espR":%d,"espG":%d,"espB":%d,"espBox":%s,"espName":%s,"espHealth":%s,"espDist":%s,"espTracer":%s,"randomDir":%s,"flySpeed":%d,"flyHeight":%d,"fovEnabled":%s,"fovRange":%d,"orbitSpeed":%d,"orbitDistance":%d,"orbitHeight":%d,"orbitReverse":%s}',
-            escStr(v.name),
-            v.spoofKey, v.guiKey,
-            tostring(v.espEnabled),
-            v.espR, v.espG, v.espB,
-            tostring(v.espBox), tostring(v.espName),
-            tostring(v.espHealth), tostring(v.espDist),
-            tostring(v.espTracer), tostring(v.randomDir),
-            v.flySpeed, v.flyHeight,
-            tostring(v.fovEnabled), v.fovRange,
-            v.orbitSpeed, v.orbitDistance, v.orbitHeight,
-            tostring(v.orbitReverse)
-        )
-    end
-    return "[" .. table.concat(p, ",") .. "]"
-end
-
 local function serAll()
-    return string.format('{"settings":%s,"presets":%s,"settingsPresets":%s}',
-        serSettings(), serPresets(customPresets), serSettingsPresets(settingsPresets))
-end
-
-local function jsonBool(src, key) local v = src:match('"'..key..'":(%a+)'); return v == "true" end
-local function jsonNum(src, key)  return tonumber(src:match('"'..key..'":([%-]?%d+)')) end
-local function jsonStr(src, key)  return src:match('"'..key..'":"([^"]*)"') end
-
-local function parseSettings(src)
-    local sk = jsonStr(src, "spoofKey"); local gk = jsonStr(src, "guiKey")
-    if sk then local ok,kc=pcall(function() return Enum.KeyCode[sk] end); if ok and kc then state.spoofKey=kc end end
-    if gk then local ok,kc=pcall(function() return Enum.KeyCode[gk] end); if ok and kc then state.guiKey=kc end end
-    local eb = src:match('"espEnabled":(%a+)'); if eb then state.espEnabled=(eb=="true") end
-    state.espR      = jsonNum(src,"espR")      or state.espR
-    state.espG      = jsonNum(src,"espG")      or state.espG
-    state.espB      = jsonNum(src,"espB")      or state.espB
-    state.espBox    = (src:match('"espBox":(%a+)')    or "true")  == "true"
-    state.espName   = (src:match('"espName":(%a+)')   or "true")  == "true"
-    state.espHealth = (src:match('"espHealth":(%a+)') or "true")  == "true"
-    state.espDist   = (src:match('"espDist":(%a+)')   or "true")  == "true"
-    state.espTracer = (src:match('"espTracer":(%a+)') or "false") == "true"
-    state.randomDir = (src:match('"randomDir":(%a+)') or "false") == "true"
-    state.flySpeed  = jsonNum(src,"flySpeed")  or state.flySpeed
-    state.flyHeight = jsonNum(src,"flyHeight") or state.flyHeight
-    state.fovEnabled= (src:match('"fovEnabled":(%a+)') or "false") == "true"
-    state.fovRange  = jsonNum(src,"fovRange")  or state.fovRange
-    state.orbitSpeed    = jsonNum(src,"orbitSpeed")    or state.orbitSpeed
-    state.orbitDistance = jsonNum(src,"orbitDistance") or state.orbitDistance
-    state.orbitHeight   = jsonNum(src,"orbitHeight")   or state.orbitHeight
-    state.orbitReverse  = (src:match('"orbitReverse":(%a+)') or "false") == "true"
-end
-
-local function parsePresets(json)
-    local r = {}
-    for e in json:gmatch("{(.-)}") do
-        local n=e:match('"name":"([^"]*)"'); local x=tonumber(e:match('"x":([%-%.%d]+)'))
-        local y=tonumber(e:match('"y":([%-%.%d]+)')); local z=tonumber(e:match('"z":([%-%.%d]+)'))
-        if n and x and y and z then r[#r+1]={name=n,x=x,y=y,z=z} end
-    end
-    return r
-end
-
-local function parseSettingsPresets(json)
-    local r = {}
-    for e in json:gmatch("{(.-)}") do
-        local n = e:match('"name":"([^"]*)"')
-        if n then
-            local function gb(k) return (e:match('"'..k..'":(%a+)') or "false")=="true" end
-            local function gn(k) return tonumber(e:match('"'..k..'":([%-]?%d+)')) end
-            local function gs(k) return e:match('"'..k..'":"([^"]*)"') end
-            r[#r+1] = {
-                name         = n,
-                spoofKey     = gs("spoofKey")     or "RightControl",
-                guiKey       = gs("guiKey")       or "RightShift",
-                espEnabled   = gb("espEnabled"),
-                espR         = gn("espR")         or 122,
-                espG         = gn("espG")         or 186,
-                espB         = gn("espB")         or 136,
-                espBox       = gb("espBox"),
-                espName      = gb("espName"),
-                espHealth    = gb("espHealth"),
-                espDist      = gb("espDist"),
-                espTracer    = gb("espTracer"),
-                randomDir    = gb("randomDir"),
-                flySpeed     = gn("flySpeed")     or 50,
-                flyHeight    = gn("flyHeight")    or 10,
-                fovEnabled   = gb("fovEnabled"),
-                fovRange     = gn("fovRange")     or 60,
-                orbitSpeed   = gn("orbitSpeed")   or 1,
-                orbitDistance= gn("orbitDistance")or 20,
-                orbitHeight  = gn("orbitHeight")  or 0,
-                orbitReverse = gb("orbitReverse"),
-            }
-        end
-    end
-    return r
+    return string.format('{"settings":%s,"presets":%s}', serSettings(), serPresets())
 end
 
 local function saveAll()
@@ -309,31 +113,43 @@ end
 
 local function loadAll()
     if not (readfile and isfile and isfile(SAVE_FILE)) then return end
-    local ok, raw = pcall(readfile, SAVE_FILE); if not ok or not raw or raw=="" then return end
-    local settingsBlock        = raw:match('"settings":(%b{})')
-    local presetsBlock         = raw:match('"presets":(%b[])')
-    local settingsPresetsBlock = raw:match('"settingsPresets":(%b[])')
-    if settingsBlock        then pcall(parseSettings,        settingsBlock) end
-    if presetsBlock         then customPresets   = parsePresets(presetsBlock)         else customPresets   = parsePresets(raw) end
-    if settingsPresetsBlock then settingsPresets = parseSettingsPresets(settingsPresetsBlock) end
+    local ok, raw = pcall(readfile, SAVE_FILE)
+    if not ok or not raw or raw == "" then return end
+    local sb = raw:match('"settings":(%b{})'); local pb = raw:match('"presets":(%b[])')
+    if sb then pcall(function()
+        local sk = jsonStr(sb,"spoofKey"); local gk = jsonStr(sb,"guiKey")
+        if sk then local o,k=pcall(function() return Enum.KeyCode[sk] end); if o and k then state.spoofKey=k end end
+        if gk then local o,k=pcall(function() return Enum.KeyCode[gk] end); if o and k then state.guiKey=k end end
+        state.stickEnabled = (sb:match('"stickEnabled":(%a+)') or "false") == "true"
+        state.randomDir    = (sb:match('"randomDir":(%a+)')    or "false") == "true"
+        state.fovEnabled   = (sb:match('"fovEnabled":(%a+)')   or "false") == "true"
+        state.fovRange     = jsonNum(sb,"fovRange") or state.fovRange
+    end) end
+    if pb then pcall(function()
+        for e in pb:gmatch("{(.-)}") do
+            local n=e:match('"name":"([^"]*)"'); local x=tonumber(e:match('"x":([%-%.%d]+)'))
+            local y=tonumber(e:match('"y":([%-%.%d]+)')); local z=tonumber(e:match('"z":([%-%.%d]+)'))
+            if n and x and y and z then customPresets[#customPresets+1]={name=n,x=x,y=y,z=z} end
+        end
+    end) end
 end
 loadAll()
 
 -- ════════════════════════════════════════════════════════════════════════════
---  SPOOF
+--  SPOOF ENGINE
 -- ════════════════════════════════════════════════════════════════════════════
-local spoofBasePos = Vector3.zero
-
 local function stopSpoof()
     if spoofConn then spoofConn:Disconnect(); spoofConn = nil end
 end
 
 local function randomVec()
-    return Vector3.new(
+    local v = Vector3.new(
         math.random(-100,100)/100,
-        math.random(  0,100)/100,
+        math.random(  10,100)/100,
         math.random(-100,100)/100
-    ).Unit
+    )
+    if v.Magnitude < 0.01 then v = Vector3.new(0,1,0) end
+    return v.Unit
 end
 
 local function startSpoof()
@@ -341,21 +157,23 @@ local function startSpoof()
     local char = LocalPlayer.Character
     local hrp  = char and char:FindFirstChild("HumanoidRootPart")
     spoofBasePos = hrp and hrp.Position or Vector3.zero
-
     state.randomDirVec   = randomVec()
     state.randomDirTimer = 0
+
     spoofConn = RunService.Heartbeat:Connect(function(dt)
         if not state.enabled then return end
 
+        -- Base position
         local base
         if state.stickEnabled then
-            local char = LocalPlayer.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            base = hrp and hrp.Position or spoofBasePos
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChild("HumanoidRootPart")
+            base = h and h.Position or spoofBasePos
         else
             base = spoofBasePos
         end
 
+        -- Compute fake position
         local fp
         if state.randomDir then
             state.randomDirTimer = state.randomDirTimer + dt
@@ -370,166 +188,14 @@ local function startSpoof()
             fp = base + Vector3.new(state.x, state.y, state.z)
         end
 
+        -- Apply to targeted players
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer and (state.targetAll or targeted[p.Name]) then
-                local c = p.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
+                local c = p.Character
+                local h = c and c:FindFirstChild("HumanoidRootPart")
                 if h then h.CFrame = CFrame.new(fp) end
             end
         end
-    end)
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  ORBIT ENGINE
--- ════════════════════════════════════════════════════════════════════════════
-local function stopOrbit()
-    if orbitConn then orbitConn:Disconnect(); orbitConn = nil end
-end
-
-local function startOrbit()
-    stopOrbit()
-    state.orbitAngle = 0
-    state.randomDirTimer = 0
-    state.randomDirVec   = randomVec()
-    local dirMult = 1
-
-    orbitConn = RunService.Heartbeat:Connect(function(dt)
-        if not state.orbitEnabled then stopOrbit(); return end
-
-        if state.randomDir then
-            state.randomDirTimer = state.randomDirTimer + dt
-            if state.randomDirTimer >= 2.0 then
-                state.randomDirTimer = 0
-                dirMult = (math.random(0,1) == 0) and 1 or -1
-            end
-        else
-            dirMult = 1
-        end
-
-        state.orbitAngle = state.orbitAngle + dt * state.orbitSpeed * dirMult
-        local ox = math.cos(state.orbitAngle) * state.orbitDistance
-        local oz = math.sin(state.orbitAngle) * state.orbitDistance
-        local oy = state.orbitHeight
-
-        if state.orbitReverse then
-            local char = LocalPlayer.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            if not hrp then return end
-
-            local anchor = nil
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer and (state.targetAll or orbitTargeted[p.Name]) then
-                    local c = p.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
-                    if h then anchor = h.Position; break end
-                end
-            end
-            if anchor then
-                hrp.CFrame = CFrame.new(anchor + Vector3.new(ox, oy, oz))
-            end
-        else
-            local char = LocalPlayer.Character
-            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-            local base = hrp and hrp.Position or Vector3.zero
-            local fp   = base + Vector3.new(ox, oy, oz)
-
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer and (state.targetAll or orbitTargeted[p.Name]) then
-                    local c = p.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
-                    if h then h.CFrame = CFrame.new(fp) end
-                end
-            end
-        end
-    end)
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  FLY ENGINE
--- ════════════════════════════════════════════════════════════════════════════
-local function stopFly()
-    if flyConn then flyConn:Disconnect(); flyConn = nil end
-    local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        local bg = hrp:FindFirstChild("FlyBodyGyro")
-        local bv = hrp:FindFirstChild("FlyBodyVelocity")
-        if bg then bg:Destroy() end
-        if bv then bv:Destroy() end
-    end
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then hum.PlatformStand = false end
-end
-
-local function startFly()
-    stopFly()
-    local char = LocalPlayer.Character
-    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then hum.PlatformStand = true end
-
-    local bg = Instance.new("BodyGyro")
-    bg.Name       = "FlyBodyGyro"
-    bg.MaxTorque  = Vector3.new(1e5, 1e5, 1e5)
-    bg.D          = 100
-    bg.Parent     = hrp
-
-    local bv = Instance.new("BodyVelocity")
-    bv.Name      = "FlyBodyVelocity"
-    bv.MaxForce  = Vector3.new(1e5, 1e5, 1e5)
-    bv.Velocity  = Vector3.zero
-    bv.Parent    = hrp
-
-    flyConn = RunService.Heartbeat:Connect(function()
-        if not state.flyEnabled then stopFly(); return end
-        local cam = workspace.CurrentCamera
-        local spd = state.flySpeed
-        local vel = Vector3.zero
-
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + (cam.CFrame.LookVector * spd) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - (cam.CFrame.LookVector * spd) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - (cam.CFrame.RightVector * spd) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + (cam.CFrame.RightVector * spd) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then vel = vel + Vector3.new(0, spd, 0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or
-           UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-            vel = vel - Vector3.new(0, spd, 0)
-        end
-
-        if vel.Magnitude < 0.01 then
-            bv.Velocity = Vector3.new(0,0,0)
-        else
-            bv.Velocity = vel
-        end
-        bg.CFrame = cam.CFrame
-    end)
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  NOCLIP ENGINE
--- ════════════════════════════════════════════════════════════════════════════
-local function stopNoclip()
-    if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
-    local char = LocalPlayer.Character
-    if char then
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") then p.CanCollide = true end
-        end
-    end
-end
-
-local function startNoclip()
-    stopNoclip()
-    noclipConn = RunService.Stepped:Connect(function()
-        if not state.noclipEnabled then stopNoclip(); return end
-        local char = LocalPlayer.Character
-        if not char then return end
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
-                p.CanCollide = false
-            end
-        end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp then hrp.CanCollide = false end
     end)
 end
 
@@ -546,366 +212,31 @@ end
 local function buildFOVGui(parentGui)
     destroyFOVGui()
     fovGui = Instance.new("Frame")
-    fovGui.Name               = "FOVVisualizer"
-    fovGui.Size               = UDim2.new(1, 0, 1, 0)
-    fovGui.BackgroundTransparency = 1
-    fovGui.ZIndex             = 50
-    fovGui.Parent             = parentGui
+    fovGui.Name = "FOVVisualizer"; fovGui.Size = UDim2.new(1,0,1,0)
+    fovGui.BackgroundTransparency = 1; fovGui.ZIndex = 50; fovGui.Parent = parentGui
 
-    local lines = {}
+    local segs = {}
     for i = 1, FOV_SEGMENTS do
-        local seg = Instance.new("Frame")
-        seg.Size               = UDim2.new(0, 2, 0, 2)
-        seg.BackgroundColor3   = Color3.fromRGB(255, 220, 60)
-        seg.BorderSizePixel    = 0
-        seg.AnchorPoint        = Vector2.new(0.5, 0.5)
-        seg.ZIndex             = 51
-        seg.Parent             = fovGui
-        lines[i] = seg
+        local s = Instance.new("Frame"); s.Size = UDim2.new(0,2,0,2)
+        s.BackgroundColor3 = Color3.fromRGB(255,220,60); s.BorderSizePixel = 0
+        s.AnchorPoint = Vector2.new(0.5,0.5); s.ZIndex = 51; s.Parent = fovGui
+        segs[i] = s
     end
 
-    local fovUpdateConn
-    fovUpdateConn = RunService.RenderStepped:Connect(function()
+    local conn
+    conn = RunService.RenderStepped:Connect(function()
         if not state.fovEnabled or not fovGui or not fovGui.Parent then
-            fovUpdateConn:Disconnect(); return
+            conn:Disconnect(); return
         end
-
-        local screenSize = fovGui.AbsoluteSize
-        local cx = screenSize.X / 2
-        local cy = screenSize.Y / 2
-
-        local camFOV    = workspace.CurrentCamera.FieldOfView
-        local halfFOV   = math.rad(camFOV / 2)
-        local halfRange = math.rad(state.fovRange)
-        local screenRadius = (math.tan(halfRange) / math.tan(halfFOV)) * (screenSize.Y / 2)
-
-        for i, seg in ipairs(lines) do
-            local angle = (i / FOV_SEGMENTS) * math.pi * 2
-            local px    = cx + math.cos(angle) * screenRadius
-            local py    = cy + math.sin(angle) * screenRadius
-            seg.Position = UDim2.new(0, px, 0, py)
-            local bright = 0.85 + 0.15 * math.sin(angle * 3 + tick() * 2)
-            seg.BackgroundColor3 = Color3.fromRGB(
-                math.floor(255 * bright),
-                math.floor(210 * bright),
-                math.floor(40  * bright)
-            )
-        end
-    end)
-
-    return fovGui
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  ESP ENGINE
--- ════════════════════════════════════════════════════════════════════════════
-local espObjects = {}
-local ESP_FOLDER_NAME = "FakePosESP"
-local espFolder = workspace:FindFirstChild(ESP_FOLDER_NAME)
-    or (function()
-        local f = Instance.new("Folder"); f.Name=ESP_FOLDER_NAME; f.Parent=workspace; return f
-    end)()
-
-local function espColor() return Color3.fromRGB(state.espR, state.espG, state.espB) end
-
-local function removeESP(playerName)
-    local e = espObjects[playerName]; if not e then return end
-    if e.box       then e.box:Destroy() end
-    if e.billboard then e.billboard:Destroy() end
-    espObjects[playerName] = nil
-end
-
-local function buildESP(plr)
-    removeESP(plr.Name)
-    local char = plr.Character; if not char then return end
-    local hrp  = char:FindFirstChild("HumanoidRootPart"); if not hrp then return end
-    local hum  = char:FindFirstChildOfClass("Humanoid")
-    local col  = espColor(); local entry = {}
-
-    if state.espBox then
-        local box = Instance.new("SelectionBox")
-        box.Adornee=char; box.Color3=col; box.LineThickness=0.06
-        box.SurfaceTransparency=0.88; box.SurfaceColor3=col; box.Parent=espFolder
-        entry.box = box
-    end
-
-    if state.espName or state.espHealth or state.espDist then
-        local bb = Instance.new("BillboardGui")
-        bb.Name="ESP_"..plr.Name; bb.Adornee=hrp; bb.Size=UDim2.new(0,160,0,58)
-        bb.StudsOffset=Vector3.new(0,3.2,0); bb.AlwaysOnTop=true; bb.LightInfluence=0
-        bb.ResetOnSpawn=false; bb.Parent=espFolder
-
-        local bgFrame = Instance.new("Frame")
-        bgFrame.Size=UDim2.new(1,0,1,0); bgFrame.BackgroundTransparency=1; bgFrame.Parent=bb
-
-        if state.espName then
-            local nameRow=Instance.new("Frame"); nameRow.Size=UDim2.new(1,0,0,18)
-            nameRow.Position=UDim2.new(0,0,0,0); nameRow.BackgroundColor3=Color3.fromRGB(10,10,10)
-            nameRow.BackgroundTransparency=0.35; nameRow.BorderSizePixel=0; nameRow.Parent=bgFrame
-            local nc=Instance.new("UICorner"); nc.CornerRadius=UDim.new(0,4); nc.Parent=nameRow
-            local dispLbl=Instance.new("TextLabel"); dispLbl.Size=UDim2.new(1,-8,1,0)
-            dispLbl.Position=UDim2.new(0,4,0,0); dispLbl.BackgroundTransparency=1
-            dispLbl.Text=plr.DisplayName; dispLbl.TextSize=12; dispLbl.Font=Enum.Font.GothamBold
-            dispLbl.TextColor3=col; dispLbl.TextXAlignment=Enum.TextXAlignment.Center
-            dispLbl.TextTruncate=Enum.TextTruncate.AtEnd; dispLbl.Parent=nameRow
-            local userLbl=Instance.new("TextLabel"); userLbl.Size=UDim2.new(1,-8,0,12)
-            userLbl.Position=UDim2.new(0,4,0,20); userLbl.BackgroundTransparency=1
-            userLbl.Text="@"..plr.Name; userLbl.TextSize=9; userLbl.Font=Enum.Font.Gotham
-            userLbl.TextColor3=Color3.fromRGB(180,180,180); userLbl.TextXAlignment=Enum.TextXAlignment.Center
-            userLbl.Parent=bgFrame
-        end
-
-        if state.espHealth and hum then
-            local hpBG=Instance.new("Frame"); hpBG.Size=UDim2.new(1,0,0,5); hpBG.Position=UDim2.new(0,0,0,34)
-            hpBG.BackgroundColor3=Color3.fromRGB(40,40,40); hpBG.BorderSizePixel=0; hpBG.Parent=bgFrame
-            local hpBGc=Instance.new("UICorner"); hpBGc.CornerRadius=UDim.new(0,3); hpBGc.Parent=hpBG
-            local hpFill=Instance.new("Frame"); hpFill.Size=UDim2.new(1,0,1,0)
-            hpFill.BackgroundColor3=T.hpGreen; hpFill.BorderSizePixel=0; hpFill.Parent=hpBG
-            local hpFc=Instance.new("UICorner"); hpFc.CornerRadius=UDim.new(0,3); hpFc.Parent=hpFill
-            entry.hpFill=hpFill; entry.hum=hum
-        end
-
-        if state.espDist then
-            local distLbl=Instance.new("TextLabel"); distLbl.Size=UDim2.new(1,0,0,12)
-            distLbl.Position=UDim2.new(0,0,0,44); distLbl.BackgroundTransparency=1
-            distLbl.Text="0 studs"; distLbl.TextSize=9; distLbl.Font=Enum.Font.Gotham
-            distLbl.TextColor3=Color3.fromRGB(160,160,160); distLbl.TextXAlignment=Enum.TextXAlignment.Center
-            distLbl.Parent=bgFrame; entry.distLbl=distLbl; entry.hrp=hrp
-        end
-
-        entry.billboard = bb
-    end
-
-    entry.char = char
-    espObjects[plr.Name] = entry
-
-    char.AncestryChanged:Connect(function()
-        if not char:IsDescendantOf(workspace) then removeESP(plr.Name) end
-    end)
-end
-
-local function refreshAllESP()
-    for name,_ in pairs(espObjects) do removeESP(name) end
-    if not state.espEnabled then return end
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            if plr.Character then buildESP(plr) end
-            plr.CharacterAdded:Connect(function()
-                task.wait()
-                if state.espEnabled then buildESP(plr) end
-            end)
-        end
-    end
-end
-
-RunService.Heartbeat:Connect(function()
-    if not state.espEnabled then return end
-    local localChar = LocalPlayer.Character
-    local localHRP  = localChar and localChar:FindFirstChild("HumanoidRootPart")
-    for _, e in pairs(espObjects) do
-        if e.hpFill and e.hum and e.hum.Parent then
-            local pct = math.clamp(e.hum.Health / math.max(e.hum.MaxHealth, 1), 0, 1)
-            e.hpFill.Size = UDim2.new(pct, 0, 1, 0)
-            e.hpFill.BackgroundColor3 = Color3.fromRGB(
-                math.floor((1-pct)*200 + pct*90), math.floor(pct*200 + (1-pct)*70), 70)
-        end
-        if e.distLbl and e.hrp and e.hrp.Parent and localHRP then
-            local dist = math.floor((e.hrp.Position - localHRP.Position).Magnitude)
-            e.distLbl.Text = dist .. " studs"
-        end
-    end
-end)
-
-Players.PlayerAdded:Connect(function(plr)
-    plr.CharacterAdded:Connect(function()
-        task.wait()
-        if state.espEnabled then buildESP(plr) end
-    end)
-end)
-Players.PlayerRemoving:Connect(function(plr)
-    removeESP(plr.Name); targeted[plr.Name] = nil
-end)
-
--- ════════════════════════════════════════════════════════════════════════════
---  AIMBOT ENGINE
--- ════════════════════════════════════════════════════════════════════════════
-local function stopAimbot()
-    if aimbotConn then aimbotConn:Disconnect(); aimbotConn = nil end
-end
-
-local function startAimbot()
-    stopAimbot()
-    aimbotConn = RunService.RenderStepped:Connect(function()
-        if not state.aimbotEnabled then return end
-        if state.aimbotHoldRMB then
-            if not UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then return end
-        end
-        local cam    = workspace.CurrentCamera
-        local target = getNearestTarget(state.aimbotFOV, state.aimbotBone)
-        if not target or not target.Character then return end
-        local bone = target.Character:FindFirstChild(state.aimbotBone)
-                  or target.Character:FindFirstChild("Head")
-                  or target.Character:FindFirstChild("HumanoidRootPart")
-        if not bone then return end
-        local smooth = math.max(1, state.aimbotSmooth)
-        local newCF  = CFrame.new(cam.CFrame.Position, bone.Position)
-        cam.CFrame   = cam.CFrame:Lerp(newCF, 1 / smooth)
-    end)
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  RAGEBOT ENGINE
--- ════════════════════════════════════════════════════════════════════════════
-
--- Target-selection helpers
-local function getRagebotTarget()
-    local mode = state.ragebotTargetMode
-    local cam  = workspace.CurrentCamera
-    local camPos = cam.CFrame.Position
-
-    local candidates = {}
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character then
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local bone = p.Character:FindFirstChild(state.ragebotBone)
-                          or p.Character:FindFirstChild("Head")
-                          or p.Character:FindFirstChild("HumanoidRootPart")
-                if bone then
-                    local sp, onScreen = cam:WorldToViewportPoint(bone.Position)
-                    if onScreen then
-                        candidates[#candidates+1] = {
-                            player  = p,
-                            bone    = bone,
-                            hp      = hum.Health,
-                            dist    = (camPos - bone.Position).Magnitude,
-                            screenDist = (Vector2.new(sp.X, sp.Y) - Vector2.new(cam.ViewportSize.X/2, cam.ViewportSize.Y/2)).Magnitude,
-                        }
-                    end
-                end
-            end
-        end
-    end
-
-    if #candidates == 0 then return nil end
-
-    if mode == "Closest" then
-        table.sort(candidates, function(a,b) return a.screenDist < b.screenDist end)
-    elseif mode == "Lowest HP" then
-        table.sort(candidates, function(a,b) return a.hp < b.hp end)
-    elseif mode == "Highest HP" then
-        table.sort(candidates, function(a,b) return a.hp > b.hp end)
-    elseif mode == "Random" then
-        local i = math.random(1, #candidates)
-        return candidates[i].player, candidates[i].bone
-    elseif mode == "Nearest Dist" then
-        table.sort(candidates, function(a,b) return a.dist < b.dist end)
-    end
-
-    return candidates[1].player, candidates[1].bone
-end
-
-local function stopRagebot()
-    if ragebotConn then ragebotConn:Disconnect(); ragebotConn = nil end
-    ragebotFiring = false
-end
-
-local function startRagebot()
-    stopRagebot()
-    ragebotConn = RunService.Heartbeat:Connect(function()
-        if not state.ragebotEnabled or ragebotFiring then return end
-
-        -- Hitchance gate
-        if math.random(1, 100) > state.ragebotHitchance then return end
-
-        local cam = workspace.CurrentCamera
-        local target, bone = getRagebotTarget()
-        if not target or not bone then return end
-
-        -- Velocity prediction: offset aim by estimated travel time
-        local bonePos = bone.Position
-        if state.ragebotPrediction then
-            local hrp = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                local vel = hrp.AssemblyLinearVelocity or Vector3.zero
-                local dist = (cam.CFrame.Position - bonePos).Magnitude
-                local travelTime = dist / 300  -- ~300 stud/s bullet approx
-                bonePos = bonePos + vel * travelTime
-            end
-        end
-
-        -- Snap camera to target
-        local origCF = cam.CFrame
-        cam.CFrame = CFrame.new(origCF.Position, bonePos)
-
-        ragebotFiring = true
-        task.spawn(function()
-            -- First shot
-            safeFire()
-
-            -- Doubleshot: fire a second time after a short gap
-            if state.ragebotDoubleshot then
-                task.wait(0.05)
-                safeFire()
-            end
-
-            -- Hold delay then allow next shot
-            task.wait(math.max(0.016, state.ragebotDelay / 1000))
-            cam.CFrame = origCF
-            ragebotFiring = false
-        end)
-    end)
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  TRIGGERBOT ENGINE
--- ════════════════════════════════════════════════════════════════════════════
-local function stopTriggerbot()
-    if triggerConn then triggerConn:Disconnect(); triggerConn = nil end
-    triggerFiring = false
-end
-
-local function startTriggerbot()
-    stopTriggerbot()
-    triggerConn = RunService.Heartbeat:Connect(function()
-        if not state.triggerEnabled or triggerFiring then return end
-
-        local cam   = workspace.CurrentCamera
-        local mouse = LocalPlayer:GetMouse()
-        local vp    = cam.ViewportSize
-        local center = Vector2.new(vp.X / 2, vp.Y / 2)
-
-        -- Raycast from crosshair
-        local unitRay = cam:ScreenPointToRay(mouse.X, mouse.Y)
-        local params  = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        local lc = LocalPlayer.Character
-        params.FilterDescendantsInstances = lc and {lc} or {}
-        local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, params)
-
-        if result then
-            local model = result.Instance:FindFirstAncestorOfClass("Model")
-            local plr   = model and Players:GetPlayerFromCharacter(model)
-            if plr and plr ~= LocalPlayer then
-                -- FOV gate: target must be within radius of crosshair
-                local hum = model:FindFirstChildOfClass("Humanoid")
-                if hum and hum.Health > 0 then
-                    local hrp = model:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        local sp, onScreen = cam:WorldToViewportPoint(hrp.Position)
-                        if onScreen then
-                            local screenDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                            if screenDist <= state.triggerFOV then
-                                triggerFiring = true
-                                task.delay(math.max(0, state.triggerDelay / 1000), function()
-                                    if state.triggerEnabled then safeFire() end
-                                    triggerFiring = false
-                                end)
-                            end
-                        end
-                    end
-                end
-            end
+        local sz = fovGui.AbsoluteSize
+        local cx, cy = sz.X/2, sz.Y/2
+        local camFOV = workspace.CurrentCamera.FieldOfView
+        local r = (math.tan(math.rad(state.fovRange)) / math.tan(math.rad(camFOV/2))) * (sz.Y/2)
+        for i, s in ipairs(segs) do
+            local a = (i/FOV_SEGMENTS)*math.pi*2
+            s.Position = UDim2.new(0, cx+math.cos(a)*r, 0, cy+math.sin(a)*r)
+            local b = 0.85 + 0.15*math.sin(a*3 + tick()*2)
+            s.BackgroundColor3 = Color3.fromRGB(math.floor(255*b), math.floor(210*b), math.floor(40*b))
         end
     end)
 end
@@ -914,9 +245,7 @@ end
 --  CLEANUP
 -- ════════════════════════════════════════════════════════════════════════════
 local function cleanup()
-    stopSpoof(); stopOrbit(); stopFly(); stopNoclip(); stopAimbot(); stopRagebot(); stopTriggerbot(); destroyFOVGui()
-    for name in pairs(espObjects) do removeESP(name) end
-    if espFolder and espFolder.Parent then espFolder:Destroy() end
+    stopSpoof(); destroyFOVGui()
     if guiRef then guiRef:Destroy(); guiRef = nil end
 end
 
@@ -925,68 +254,52 @@ end
 -- ════════════════════════════════════════════════════════════════════════════
 local TW = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local function tw(o, p) TweenService:Create(o, TW, p):Play() end
-local function corner(p, r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,r or 8); c.Parent=p end
+local function corner(p, r)
+    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = p
+end
 local function stroke(p, col, w)
-    local s=Instance.new("UIStroke"); s.Color=col or T.border; s.Thickness=w or 1; s.Parent=p; return s
+    local s = Instance.new("UIStroke"); s.Color = col or T.border; s.Thickness = w or 1; s.Parent = p; return s
 end
 local function listLayout(p, pad, dir)
-    local l=Instance.new("UIListLayout"); l.Padding=UDim.new(0,pad or 6)
-    l.SortOrder=Enum.SortOrder.LayoutOrder; l.FillDirection=dir or Enum.FillDirection.Vertical; l.Parent=p
+    local l = Instance.new("UIListLayout"); l.Padding = UDim.new(0, pad or 6)
+    l.SortOrder = Enum.SortOrder.LayoutOrder; l.FillDirection = dir or Enum.FillDirection.Vertical; l.Parent = p
 end
 local function padding(p, a, b)
-    local u=Instance.new("UIPadding"); u.PaddingLeft=UDim.new(0,a); u.PaddingRight=UDim.new(0,a)
-    u.PaddingTop=UDim.new(0,b or a); u.PaddingBottom=UDim.new(0,b or a); u.Parent=p
+    local u = Instance.new("UIPadding"); u.PaddingLeft = UDim.new(0,a); u.PaddingRight = UDim.new(0,a)
+    u.PaddingTop = UDim.new(0,b or a); u.PaddingBottom = UDim.new(0,b or a); u.Parent = p
 end
 local function sectionLabel(parent, text, order)
-    local l=Instance.new("TextLabel"); l.Size=UDim2.new(1,0,0,14); l.BackgroundTransparency=1
-    l.Text=text; l.TextSize=10; l.Font=Enum.Font.GothamBold; l.TextColor3=T.sub
-    l.TextXAlignment=Enum.TextXAlignment.Left; l.LayoutOrder=order or 0; l.Parent=parent
+    local l = Instance.new("TextLabel"); l.Size = UDim2.new(1,0,0,14); l.BackgroundTransparency = 1
+    l.Text = text; l.TextSize = 10; l.Font = Enum.Font.GothamBold; l.TextColor3 = T.sub
+    l.TextXAlignment = Enum.TextXAlignment.Left; l.LayoutOrder = order or 0; l.Parent = parent
 end
 
 local function makePillToggle(parent, initVal, onChange)
-    local pill=Instance.new("Frame"); pill.Size=UDim2.new(0,40,0,22)
-    pill.BackgroundColor3=initVal and T.accent or T.border; pill.BorderSizePixel=0; pill.Parent=parent; corner(pill,11)
-    local knob=Instance.new("Frame"); knob.Size=UDim2.new(0,15,0,15)
-    knob.Position=initVal and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-    knob.BackgroundColor3=Color3.fromRGB(240,240,240); knob.BorderSizePixel=0; knob.Parent=pill; corner(knob,8)
-    local val=initVal
-    local function setV(v,animate)
-        val=v; local t=animate and 0.15 or 0
-        TweenService:Create(pill,TweenInfo.new(t),{BackgroundColor3=v and T.accent or T.border}):Play()
-        TweenService:Create(knob,TweenInfo.new(t),{Position=v and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)}):Play()
+    local pill = Instance.new("Frame"); pill.Size = UDim2.new(0,40,0,22)
+    pill.BackgroundColor3 = initVal and T.accent or T.border; pill.BorderSizePixel = 0; pill.Parent = parent; corner(pill,11)
+    local knob = Instance.new("Frame"); knob.Size = UDim2.new(0,15,0,15)
+    knob.Position = initVal and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
+    knob.BackgroundColor3 = Color3.fromRGB(240,240,240); knob.BorderSizePixel = 0; knob.Parent = pill; corner(knob,8)
+    local val = initVal
+    local function setV(v, animate)
+        val = v; local t = animate and 0.15 or 0
+        TweenService:Create(pill, TweenInfo.new(t), {BackgroundColor3 = v and T.accent or T.border}):Play()
+        TweenService:Create(knob, TweenInfo.new(t), {Position = v and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)}):Play()
     end
-    local clickArea=Instance.new("TextButton"); clickArea.Size=UDim2.new(1,0,1,0)
-    clickArea.BackgroundTransparency=1; clickArea.Text=""; clickArea.ZIndex=3; clickArea.Parent=pill
-    clickArea.MouseButton1Click:Connect(function() val=not val; setV(val,true); if onChange then onChange(val) end end)
-    return pill, setV, function() return val end
-end
-
-local function makePillToggleColored(parent, initVal, onCol, offCol, onChange)
-    local pill=Instance.new("Frame"); pill.Size=UDim2.new(0,40,0,22)
-    pill.BackgroundColor3=initVal and onCol or T.border; pill.BorderSizePixel=0; pill.Parent=parent; corner(pill,11)
-    local knob=Instance.new("Frame"); knob.Size=UDim2.new(0,15,0,15)
-    knob.Position=initVal and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-    knob.BackgroundColor3=Color3.fromRGB(240,240,240); knob.BorderSizePixel=0; knob.Parent=pill; corner(knob,8)
-    local val=initVal
-    local function setV(v,animate)
-        val=v; local t=animate and 0.15 or 0
-        TweenService:Create(pill,TweenInfo.new(t),{BackgroundColor3=v and onCol or T.border}):Play()
-        TweenService:Create(knob,TweenInfo.new(t),{Position=v and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)}):Play()
-    end
-    local clickArea=Instance.new("TextButton"); clickArea.Size=UDim2.new(1,0,1,0)
-    clickArea.BackgroundTransparency=1; clickArea.Text=""; clickArea.ZIndex=3; clickArea.Parent=pill
-    clickArea.MouseButton1Click:Connect(function() val=not val; setV(val,true); if onChange then onChange(val) end end)
+    local click = Instance.new("TextButton"); click.Size = UDim2.new(1,0,1,0)
+    click.BackgroundTransparency = 1; click.Text = ""; click.ZIndex = 3; click.Parent = pill
+    click.MouseButton1Click:Connect(function() val = not val; setV(val,true); if onChange then onChange(val) end end)
     return pill, setV, function() return val end
 end
 
 local activeSliderFn = nil
 UserInputService.InputChanged:Connect(function(i)
-    if activeSliderFn and (i.UserInputType==Enum.UserInputType.MouseMovement or
-       i.UserInputType==Enum.UserInputType.Touch) then activeSliderFn(i) end
+    if activeSliderFn and (i.UserInputType == Enum.UserInputType.MouseMovement or
+       i.UserInputType == Enum.UserInputType.Touch) then activeSliderFn(i) end
 end)
 UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
-        activeSliderFn=nil
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        activeSliderFn = nil
     end
 end)
 
@@ -996,1347 +309,661 @@ end)
 local function makeSlider(parent, lText, minV, maxV, defV, onChange, accentColor)
     local THUMB = 16
     local ac = accentColor or T.accent
-    local acd = T.accentD
+    local wrap = Instance.new("Frame"); wrap.Size = UDim2.new(1,0,0,78)
+    wrap.BackgroundColor3 = T.card; wrap.BorderSizePixel = 0; wrap.Parent = parent; corner(wrap,10)
 
-    local wrap=Instance.new("Frame"); wrap.Size=UDim2.new(1,0,0,78)
-    wrap.BackgroundColor3=T.card; wrap.BorderSizePixel=0; wrap.Parent=parent; corner(wrap,10)
+    local hdr = Instance.new("Frame"); hdr.Size = UDim2.new(1,-24,0,18); hdr.Position = UDim2.new(0,12,0,8)
+    hdr.BackgroundTransparency = 1; hdr.Parent = wrap
 
-    local hdr=Instance.new("Frame"); hdr.Size=UDim2.new(1,-24,0,18); hdr.Position=UDim2.new(0,12,0,8)
-    hdr.BackgroundTransparency=1; hdr.Parent=wrap
+    local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(0.45,0,1,0); lbl.BackgroundTransparency = 1
+    lbl.Text = lText; lbl.TextSize = 11; lbl.Font = Enum.Font.GothamBold; lbl.TextColor3 = T.sub
+    lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Parent = hdr
 
-    local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(0.45,0,1,0); lbl.BackgroundTransparency=1
-    lbl.Text=lText; lbl.TextSize=11; lbl.Font=Enum.Font.GothamBold; lbl.TextColor3=T.sub
-    lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.Parent=hdr
+    local valBox = Instance.new("TextBox"); valBox.Size = UDim2.new(0.35,-2,1,2); valBox.Position = UDim2.new(0.45,2,0,-1)
+    valBox.BackgroundColor3 = T.inputBG; valBox.BorderSizePixel = 0; valBox.Text = tostring(defV)
+    valBox.PlaceholderText = "value"; valBox.PlaceholderColor3 = T.sub; valBox.TextColor3 = ac
+    valBox.TextSize = 12; valBox.Font = Enum.Font.GothamBold; valBox.TextXAlignment = Enum.TextXAlignment.Right
+    valBox.ClearTextOnFocus = false; valBox.ZIndex = 6; valBox.Parent = hdr; corner(valBox,5); stroke(valBox,T.accentD,1)
+    local vbPad = Instance.new("UIPadding"); vbPad.PaddingRight = UDim.new(0,5); vbPad.Parent = valBox
 
-    local valBox=Instance.new("TextBox"); valBox.Size=UDim2.new(0.35,-2,1,2); valBox.Position=UDim2.new(0.45,2,0,-1)
-    valBox.BackgroundColor3=T.inputBG; valBox.BorderSizePixel=0; valBox.Text=tostring(defV)
-    valBox.PlaceholderText="value"; valBox.PlaceholderColor3=T.sub; valBox.TextColor3=ac
-    valBox.TextSize=12; valBox.Font=Enum.Font.GothamBold; valBox.TextXAlignment=Enum.TextXAlignment.Right
-    valBox.ClearTextOnFocus=false; valBox.ZIndex=6; valBox.Parent=hdr; corner(valBox,5); stroke(valBox,acd,1)
-    local vbPad=Instance.new("UIPadding"); vbPad.PaddingRight=UDim.new(0,5); vbPad.Parent=valBox
-
-    local resetBtn=Instance.new("TextButton"); resetBtn.Size=UDim2.new(0.18,-2,1,2)
-    resetBtn.Position=UDim2.new(0.82,2,0,-1)
-    resetBtn.BackgroundColor3=T.surface; resetBtn.BorderSizePixel=0; resetBtn.Text="↺"
-    resetBtn.TextColor3=T.sub; resetBtn.TextSize=13; resetBtn.Font=Enum.Font.GothamBold
-    resetBtn.AutoButtonColor=false; resetBtn.ZIndex=6; resetBtn.Parent=hdr; corner(resetBtn,5); stroke(resetBtn,acd,1)
+    local resetBtn = Instance.new("TextButton"); resetBtn.Size = UDim2.new(0.18,-2,1,2)
+    resetBtn.Position = UDim2.new(0.82,2,0,-1); resetBtn.BackgroundColor3 = T.surface
+    resetBtn.BorderSizePixel = 0; resetBtn.Text = "↺"; resetBtn.TextColor3 = T.sub
+    resetBtn.TextSize = 13; resetBtn.Font = Enum.Font.GothamBold; resetBtn.AutoButtonColor = false
+    resetBtn.ZIndex = 6; resetBtn.Parent = hdr; corner(resetBtn,5); stroke(resetBtn,T.accentD,1)
     resetBtn.MouseEnter:Connect(function() tw(resetBtn,{BackgroundColor3=T.cardH,TextColor3=ac}) end)
     resetBtn.MouseLeave:Connect(function() tw(resetBtn,{BackgroundColor3=T.surface,TextColor3=T.sub}) end)
 
-    local track=Instance.new("Frame"); track.Size=UDim2.new(1,-24,0,4); track.Position=UDim2.new(0,12,0,58)
-    track.BackgroundColor3=T.border; track.BorderSizePixel=0; track.Parent=wrap; corner(track,4)
+    local track = Instance.new("Frame"); track.Size = UDim2.new(1,-24,0,4); track.Position = UDim2.new(0,12,0,58)
+    track.BackgroundColor3 = T.border; track.BorderSizePixel = 0; track.Parent = wrap; corner(track,4)
 
-    local fill=Instance.new("Frame"); fill.Size=UDim2.new(0,0,1,0); fill.BackgroundColor3=ac
-    fill.BorderSizePixel=0; fill.Parent=track; corner(fill,4)
+    local fill = Instance.new("Frame"); fill.Size = UDim2.new(0,0,1,0); fill.BackgroundColor3 = ac
+    fill.BorderSizePixel = 0; fill.Parent = track; corner(fill,4)
 
-    local thumb=Instance.new("Frame"); thumb.Size=UDim2.new(0,THUMB,0,THUMB)
-    thumb.Position=UDim2.new(0,-THUMB/2,0.5,-THUMB/2); thumb.BackgroundColor3=Color3.fromRGB(238,238,238)
-    thumb.BorderSizePixel=0; thumb.ZIndex=5; thumb.Parent=track; corner(thumb,THUMB/2); stroke(thumb,acd,1.5)
+    local thumb = Instance.new("Frame"); thumb.Size = UDim2.new(0,THUMB,0,THUMB)
+    thumb.Position = UDim2.new(0,-THUMB/2,0.5,-THUMB/2); thumb.BackgroundColor3 = Color3.fromRGB(238,238,238)
+    thumb.BorderSizePixel = 0; thumb.ZIndex = 5; thumb.Parent = track; corner(thumb,THUMB/2); stroke(thumb,T.accentD,1.5)
 
-    local cur=defV
-    local function updateVisual(v)
-        local pct=math.clamp((v-minV)/(maxV-minV),0,1)
-        fill.Size=UDim2.new(pct,0,1,0); thumb.Position=UDim2.new(pct,-THUMB/2,0.5,-THUMB/2)
+    local cur = defV
+    local function updateVis(v)
+        local pct = math.clamp((v-minV)/(maxV-minV),0,1)
+        fill.Size = UDim2.new(pct,0,1,0); thumb.Position = UDim2.new(pct,-THUMB/2,0.5,-THUMB/2)
     end
-    local function setV(v,fire)
-        v=math.clamp(math.floor(v+0.5),minV,maxV); cur=v
-        updateVisual(v)
-        valBox.Text=tostring(v); if fire and onChange then onChange(v) end
+    local function setV(v, fire)
+        v = math.clamp(math.floor(v+0.5),minV,maxV); cur = v
+        updateVis(v); valBox.Text = tostring(v); if fire and onChange then onChange(v) end
     end
-    local function setVTyped(v,fire)
-        v=math.floor(v+0.5); cur=v
-        updateVisual(v)
-        valBox.Text=tostring(v); if fire and onChange then onChange(v) end
-    end
-    setV(defV,false)
-
+    setV(defV, false)
     resetBtn.MouseButton1Click:Connect(function()
-        setV(defV,true)
-        tw(resetBtn,{BackgroundColor3=T.accentD}); task.delay(0.3,function() tw(resetBtn,{BackgroundColor3=T.surface}) end)
+        setV(defV,true); tw(resetBtn,{BackgroundColor3=T.accentD})
+        task.delay(0.3,function() tw(resetBtn,{BackgroundColor3=T.surface}) end)
     end)
 
     local function fromInput(inp)
-        local ax=track.AbsolutePosition.X; local aw=track.AbsoluteSize.X
-        local pct=math.clamp((inp.Position.X-ax)/aw,0,1); setV(minV+pct*(maxV-minV),true)
+        local ax = track.AbsolutePosition.X; local aw = track.AbsoluteSize.X
+        setV(minV + math.clamp((inp.Position.X-ax)/aw,0,1)*(maxV-minV), true)
     end
     local function startDrag(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
-            activeSliderFn=fromInput; fromInput(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            activeSliderFn = fromInput; fromInput(inp)
         end
     end
     track.InputBegan:Connect(startDrag); thumb.InputBegan:Connect(startDrag)
     track.InputBegan:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
             tw(thumb,{Size=UDim2.new(0,THUMB+4,0,THUMB+4)})
         end
     end)
     UserInputService.InputEnded:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
             tw(thumb,{Size=UDim2.new(0,THUMB,0,THUMB)})
         end
     end)
     valBox.Focused:Connect(function() tw(valBox,{BackgroundColor3=Color3.fromRGB(45,55,45)}) end)
     valBox.FocusLost:Connect(function()
         tw(valBox,{BackgroundColor3=T.inputBG})
-        local num=tonumber(valBox.Text:match("^%s*([%-]?%d*%.?%d*)%s*$"))
-        if num then setVTyped(num,true) else valBox.Text=tostring(cur) end
+        local num = tonumber(valBox.Text:match("^%s*([%-]?%d*%.?%d*)%s*$"))
+        if num then setV(num,true) else valBox.Text = tostring(cur) end
     end)
     wrap.MouseEnter:Connect(function() tw(wrap,{BackgroundColor3=T.cardH}) end)
-    wrap.MouseLeave:Connect(function() tw(wrap,{BackgroundColor3=T.card})  end)
-
+    wrap.MouseLeave:Connect(function() tw(wrap,{BackgroundColor3=T.card}) end)
     return wrap, function() return cur end, setV
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  TOGGLE CARD FACTORY
--- ════════════════════════════════════════════════════════════════════════════
-local function makeToggleCard(parent, labelText, descText, initVal, order, onCol, onChange)
-    local oc = onCol or T.accent
-    local card=Instance.new("Frame"); card.Size=UDim2.new(1,0,0,54); card.LayoutOrder=order or 0
-    card.BackgroundColor3=T.card; card.BorderSizePixel=0; card.Parent=parent; corner(card,10); stroke(card,T.border)
-
-    local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(1,-60,0,20); lbl.Position=UDim2.new(0,14,0,8)
-    lbl.BackgroundTransparency=1; lbl.Text=labelText; lbl.TextSize=13; lbl.Font=Enum.Font.GothamBold
-    lbl.TextColor3=T.text; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.Parent=card
-
-    local desc=Instance.new("TextLabel"); desc.Size=UDim2.new(1,-60,0,14); desc.Position=UDim2.new(0,14,0,30)
-    desc.BackgroundTransparency=1; desc.Text=descText; desc.TextSize=10; desc.Font=Enum.Font.Gotham
-    desc.TextColor3=T.sub; desc.TextXAlignment=Enum.TextXAlignment.Left; desc.Parent=card
-
-    local _pill, setPill = makePillToggleColored(card, initVal, oc, T.border, onChange)
-    _pill.Position=UDim2.new(1,-52,0.5,-11); _pill.Parent=card
-
-    card.MouseEnter:Connect(function() tw(card,{BackgroundColor3=T.cardH}) end)
-    card.MouseLeave:Connect(function() tw(card,{BackgroundColor3=T.card})  end)
-    return card, setPill
-end
-
--- ════════════════════════════════════════════════════════════════════════════
---  SEARCH BAR HELPER
--- ════════════════════════════════════════════════════════════════════════════
-local function makeSearchBar(parent, layoutOrder, borderColor, onChanged)
-    local searchRow = Instance.new("Frame")
-    searchRow.Size = UDim2.new(1, 0, 0, 36)
-    searchRow.BackgroundColor3 = T.card
-    searchRow.BorderSizePixel = 0
-    searchRow.LayoutOrder = layoutOrder
-    searchRow.Parent = parent
-    corner(searchRow, 8)
-    stroke(searchRow, borderColor or T.border, 1)
-
-    local iconLbl = Instance.new("TextLabel")
-    iconLbl.Size = UDim2.new(0, 30, 1, 0)
-    iconLbl.Position = UDim2.new(0, 4, 0, 0)
-    iconLbl.BackgroundTransparency = 1
-    iconLbl.Text = "🔍"
-    iconLbl.TextSize = 14
-    iconLbl.Font = Enum.Font.Gotham
-    iconLbl.TextColor3 = T.sub
-    iconLbl.TextXAlignment = Enum.TextXAlignment.Center
-    iconLbl.Parent = searchRow
-
-    local searchBox = Instance.new("TextBox")
-    searchBox.Size = UDim2.new(1, -44, 1, -10)
-    searchBox.Position = UDim2.new(0, 34, 0, 5)
-    searchBox.BackgroundTransparency = 1
-    searchBox.BorderSizePixel = 0
-    searchBox.PlaceholderText = "Search players..."
-    searchBox.PlaceholderColor3 = T.sub
-    searchBox.Text = ""
-    searchBox.TextColor3 = T.text
-    searchBox.TextSize = 12
-    searchBox.Font = Enum.Font.Gotham
-    searchBox.ClearTextOnFocus = false
-    searchBox.Parent = searchRow
-
-    searchBox.Focused:Connect(function()
-        tw(searchRow, {BackgroundColor3 = T.cardH})
-    end)
-    searchBox.FocusLost:Connect(function()
-        tw(searchRow, {BackgroundColor3 = T.card})
-    end)
-
-    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        if onChanged then onChanged(searchBox.Text) end
-    end)
-
-    return searchRow, searchBox
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
 --  BUILD GUI
 -- ════════════════════════════════════════════════════════════════════════════
 local function buildGUI()
-    local gui=Instance.new("ScreenGui"); gui.Name="FakePosSpoof"; gui.ResetOnSpawn=false
-    gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-    gui.Parent=(gethui and gethui()) or LocalPlayer:WaitForChild("PlayerGui")
-    guiRef=gui
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "FakePosClean"; gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = (gethui and gethui()) or LocalPlayer:WaitForChild("PlayerGui")
+    guiRef = gui
 
-    buildFOVGui(gui)
-    if not state.fovEnabled then destroyFOVGui() end
+    if state.fovEnabled then buildFOVGui(gui) end
 
-    local W, FH, MH = 480, 540, 44
-    local minimized=false; local guiVisible=true
+    local W, FH, MH = 300, 480, 44
+    local minimized  = false
+    local guiVisible = true
 
-    local TABS  = {"Offset","Targets","Orbit","OrbTargets","Fly","Noclip","ESP","Aimbot","Trigger","Rage","Settings"}
-    local tabCount = #TABS
+    -- ── Window ────────────────────────────────────────────────────────
+    local winFrame = Instance.new("Frame")
+    winFrame.Size = UDim2.new(0,W,0,FH); winFrame.Position = UDim2.new(0.5,-W/2,0.5,-FH/2)
+    winFrame.BackgroundColor3 = T.bg; winFrame.BorderSizePixel = 0
+    winFrame.Active = true; winFrame.ClipsDescendants = true; winFrame.Parent = gui
+    corner(winFrame,12); stroke(winFrame,T.border)
 
-    -- ── Window frame ──────────────────────────────────────────────────
-    local winFrame=Instance.new("Frame"); winFrame.Size=UDim2.new(0,W,0,FH)
-    winFrame.Position=UDim2.new(0.5,-W/2,0.5,-FH/2); winFrame.BackgroundColor3=T.bg
-    winFrame.BorderSizePixel=0; winFrame.Active=true; winFrame.Draggable=false
-    winFrame.ClipsDescendants=true; winFrame.Parent=gui; corner(winFrame,12); stroke(winFrame,T.border)
+    local strip = Instance.new("Frame"); strip.Size = UDim2.new(0,3,0,20); strip.Position = UDim2.new(0,0,0,12)
+    strip.BackgroundColor3 = T.accent; strip.BorderSizePixel = 0; strip.Parent = winFrame; corner(strip,2)
 
-    local strip=Instance.new("Frame"); strip.Size=UDim2.new(0,3,0,20); strip.Position=UDim2.new(0,0,0,12)
-    strip.BackgroundColor3=T.accent; strip.BorderSizePixel=0; strip.Parent=winFrame; corner(strip,2)
-
-    local titleBar=Instance.new("Frame"); titleBar.Size=UDim2.new(1,0,0,44)
-    titleBar.BackgroundColor3=T.surface; titleBar.BorderSizePixel=0; titleBar.ZIndex=3; titleBar.Parent=winFrame
-
-    local dragging,dragStart,winStart=false,nil,nil
+    -- Title bar (drag zone)
+    local titleBar = Instance.new("Frame"); titleBar.Size = UDim2.new(1,0,0,44)
+    titleBar.BackgroundColor3 = T.surface; titleBar.BorderSizePixel = 0; titleBar.ZIndex = 3; titleBar.Parent = winFrame
+    local dragging, dragStart, winStart = false, nil, nil
     titleBar.InputBegan:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
-            dragging=true; dragStart=inp.Position; winStart=winFrame.Position
+        if guiLocked then return end
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = inp.Position; winStart = winFrame.Position
         end
     end)
     titleBar.InputEnded:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
-            dragging=false
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
         end
     end)
     UserInputService.InputChanged:Connect(function(inp)
-        if dragging and (inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch) then
-            local d=inp.Position-dragStart
-            winFrame.Position=UDim2.new(winStart.X.Scale,winStart.X.Offset+d.X,winStart.Y.Scale,winStart.Y.Offset+d.Y)
+        if dragging and not guiLocked and (inp.UserInputType == Enum.UserInputType.MouseMovement or inp.UserInputType == Enum.UserInputType.Touch) then
+            local d = inp.Position - dragStart
+            winFrame.Position = UDim2.new(winStart.X.Scale, winStart.X.Offset+d.X, winStart.Y.Scale, winStart.Y.Offset+d.Y)
         end
     end)
 
-    local titleLbl=Instance.new("TextLabel"); titleLbl.Size=UDim2.new(1,-120,0,44); titleLbl.Position=UDim2.new(0,14,0,0)
-    titleLbl.BackgroundTransparency=1; titleLbl.Text="Fake Position  v8"
-    titleLbl.TextSize=14; titleLbl.Font=Enum.Font.GothamBold
-    titleLbl.TextColor3=T.text; titleLbl.TextXAlignment=Enum.TextXAlignment.Left
-    titleLbl.ZIndex=4; titleLbl.Parent=winFrame
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Size = UDim2.new(1,-120,0,44); titleLbl.Position = UDim2.new(0,14,0,0)
+    titleLbl.BackgroundTransparency = 1; titleLbl.Text = "Fake Position"
+    titleLbl.TextSize = 15; titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextColor3 = T.text; titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.ZIndex = 4; titleLbl.Parent = winFrame
 
-    local pill=Instance.new("Frame"); pill.Size=UDim2.new(0,68,0,22); pill.Position=UDim2.new(1,-118,0,11)
-    pill.BackgroundColor3=T.accentD; pill.BorderSizePixel=0; pill.ZIndex=4; pill.Parent=winFrame; corner(pill,11)
-    local pillDot=Instance.new("Frame"); pillDot.Size=UDim2.new(0,6,0,6); pillDot.Position=UDim2.new(0,8,0.5,-3)
-    pillDot.BackgroundColor3=T.accent; pillDot.BorderSizePixel=0; pillDot.ZIndex=5; pillDot.Parent=pill; corner(pillDot,3)
-    local pillTxt=Instance.new("TextLabel"); pillTxt.Size=UDim2.new(1,-20,1,0); pillTxt.Position=UDim2.new(0,19,0,0)
-    pillTxt.BackgroundTransparency=1; pillTxt.Text="ACTIVE"; pillTxt.TextSize=10; pillTxt.Font=Enum.Font.GothamBold
-    pillTxt.TextColor3=T.accent; pillTxt.TextXAlignment=Enum.TextXAlignment.Left; pillTxt.ZIndex=5; pillTxt.Parent=pill
+    -- Status pill
+    local pill = Instance.new("Frame"); pill.Size = UDim2.new(0,68,0,22); pill.Position = UDim2.new(1,-118,0,11)
+    pill.BackgroundColor3 = T.accentD; pill.BorderSizePixel = 0; pill.ZIndex = 4; pill.Parent = winFrame; corner(pill,11)
+    local pillDot = Instance.new("Frame"); pillDot.Size = UDim2.new(0,6,0,6); pillDot.Position = UDim2.new(0,8,0.5,-3)
+    pillDot.BackgroundColor3 = T.accent; pillDot.BorderSizePixel = 0; pillDot.ZIndex = 5; pillDot.Parent = pill; corner(pillDot,3)
+    local pillTxt = Instance.new("TextLabel"); pillTxt.Size = UDim2.new(1,-20,1,0); pillTxt.Position = UDim2.new(0,19,0,0)
+    pillTxt.BackgroundTransparency = 1; pillTxt.Text = "ACTIVE"; pillTxt.TextSize = 10; pillTxt.Font = Enum.Font.GothamBold
+    pillTxt.TextColor3 = T.accent; pillTxt.TextXAlignment = Enum.TextXAlignment.Left; pillTxt.ZIndex = 5; pillTxt.Parent = pill
 
     local function updateStatus()
         if state.enabled then
-            pillTxt.Text="ACTIVE"; pillTxt.TextColor3=T.accent; pillDot.BackgroundColor3=T.accent; tw(pill,{BackgroundColor3=T.accentD})
+            pillTxt.Text = "ACTIVE"; pillTxt.TextColor3 = T.accent; pillDot.BackgroundColor3 = T.accent
+            tw(pill,{BackgroundColor3=T.accentD})
         else
-            pillTxt.Text="OFF"; pillTxt.TextColor3=T.sub; pillDot.BackgroundColor3=Color3.fromRGB(70,70,70)
+            pillTxt.Text = "OFF"; pillTxt.TextColor3 = T.sub; pillDot.BackgroundColor3 = Color3.fromRGB(70,70,70)
             tw(pill,{BackgroundColor3=Color3.fromRGB(32,32,32)})
         end
     end
 
-    local minBtn=Instance.new("TextButton"); minBtn.Size=UDim2.new(0,28,0,22); minBtn.Position=UDim2.new(1,-36,0,11)
-    minBtn.BackgroundColor3=T.card; minBtn.BorderSizePixel=0; minBtn.Text="—"; minBtn.TextColor3=T.sub
-    minBtn.TextSize=13; minBtn.Font=Enum.Font.GothamBold; minBtn.AutoButtonColor=false; minBtn.ZIndex=5; minBtn.Parent=winFrame; corner(minBtn,6)
+    -- Minimize button
+    local minBtn = Instance.new("TextButton"); minBtn.Size = UDim2.new(0,28,0,22); minBtn.Position = UDim2.new(1,-36,0,11)
+    minBtn.BackgroundColor3 = T.card; minBtn.BorderSizePixel = 0; minBtn.Text = "—"; minBtn.TextColor3 = T.sub
+    minBtn.TextSize = 13; minBtn.Font = Enum.Font.GothamBold; minBtn.AutoButtonColor = false; minBtn.ZIndex = 5; minBtn.Parent = winFrame; corner(minBtn,6)
     minBtn.MouseEnter:Connect(function() tw(minBtn,{BackgroundColor3=T.cardH}) end)
-    minBtn.MouseLeave:Connect(function() tw(minBtn,{BackgroundColor3=T.card})  end)
+    minBtn.MouseLeave:Connect(function() tw(minBtn,{BackgroundColor3=T.card}) end)
     minBtn.MouseButton1Click:Connect(function()
-        minimized=not minimized; minBtn.Text=minimized and "+" or "—"
+        minimized = not minimized; minBtn.Text = minimized and "+" or "—"
         TweenService:Create(winFrame,TweenInfo.new(0.2,Enum.EasingStyle.Quad),{Size=UDim2.new(0,W,0,minimized and MH or FH)}):Play()
     end)
 
     local function setGuiVisible(v)
-        guiVisible=v
+        guiVisible = v
         if v then
-            winFrame.Visible=true
+            winFrame.Visible = true
             TweenService:Create(winFrame,TweenInfo.new(0.2,Enum.EasingStyle.Quad),{Size=UDim2.new(0,W,0,minimized and MH or FH)}):Play()
         else
             TweenService:Create(winFrame,TweenInfo.new(0.18,Enum.EasingStyle.Quad),{Size=UDim2.new(0,W,0,0)}):Play()
-            task.delay(0.2,function() if not guiVisible then winFrame.Visible=false end end)
+            task.delay(0.2, function() if not guiVisible then winFrame.Visible = false end end)
         end
     end
 
     -- ── Tab bar ───────────────────────────────────────────────────────
-    local tabBar=Instance.new("Frame"); tabBar.Size=UDim2.new(1,0,0,36); tabBar.Position=UDim2.new(0,0,0,44)
-    tabBar.BackgroundColor3=T.surface; tabBar.BorderSizePixel=0; tabBar.Parent=winFrame
-    local tabDiv=Instance.new("Frame"); tabDiv.Size=UDim2.new(1,0,0,1); tabDiv.Position=UDim2.new(0,0,1,-1)
-    tabDiv.BackgroundColor3=T.border; tabDiv.BorderSizePixel=0; tabDiv.Parent=tabBar
+    local TABS = {"Offset", "Targets", "Settings"}
+    local tabBar = Instance.new("Frame"); tabBar.Size = UDim2.new(1,0,0,36); tabBar.Position = UDim2.new(0,0,0,44)
+    tabBar.BackgroundColor3 = T.surface; tabBar.BorderSizePixel = 0; tabBar.Parent = winFrame
+    local tabDiv = Instance.new("Frame"); tabDiv.Size = UDim2.new(1,0,0,1); tabDiv.Position = UDim2.new(0,0,1,-1)
+    tabDiv.BackgroundColor3 = T.border; tabDiv.BorderSizePixel = 0; tabDiv.Parent = tabBar
 
-    local contentArea=Instance.new("Frame"); contentArea.Size=UDim2.new(1,0,1,-80); contentArea.Position=UDim2.new(0,0,0,80)
-    contentArea.BackgroundTransparency=1; contentArea.ClipsDescendants=true; contentArea.Parent=winFrame
+    local contentArea = Instance.new("Frame")
+    contentArea.Size = UDim2.new(1,0,1,-80); contentArea.Position = UDim2.new(0,0,0,80)
+    contentArea.BackgroundTransparency = 1; contentArea.ClipsDescendants = true; contentArea.Parent = winFrame
 
     local function makePage()
-        local p=Instance.new("ScrollingFrame"); p.Size=UDim2.new(1,0,1,0); p.BackgroundTransparency=1
-        p.BorderSizePixel=0; p.ScrollBarThickness=2; p.ScrollBarImageColor3=T.accentD
-        p.CanvasSize=UDim2.new(0,0,0,0); p.AutomaticCanvasSize=Enum.AutomaticSize.Y
-        p.Visible=false; p.Parent=contentArea; listLayout(p,6); padding(p,10); return p
+        local p = Instance.new("ScrollingFrame"); p.Size = UDim2.new(1,0,1,0)
+        p.BackgroundTransparency = 1; p.BorderSizePixel = 0; p.ScrollBarThickness = 2
+        p.ScrollBarImageColor3 = T.accentD; p.CanvasSize = UDim2.new(0,0,0,0)
+        p.AutomaticCanvasSize = Enum.AutomaticSize.Y; p.Visible = false; p.Parent = contentArea
+        listLayout(p,6); padding(p,10)
+        return p
     end
 
-    local offsetPage       = makePage()
-    local targetPage       = makePage()
-    local orbitPage        = makePage()
-    local orbitTargetPage  = makePage()
-    local flyPage          = makePage()
-    local noclipPage       = makePage()
-    local espPage          = makePage()
-    local aimbotPage       = makePage()
-    local triggerPage      = makePage()
-    local ragebotPage      = makePage()
-    local settingsPage     = makePage()
-    local pages        = {offsetPage, targetPage, orbitPage, orbitTargetPage, flyPage, noclipPage, espPage, aimbotPage, triggerPage, ragebotPage, settingsPage}
+    local offsetPage   = makePage()
+    local targetPage   = makePage()
+    local settingsPage = makePage()
+    local pages        = {offsetPage, targetPage, settingsPage}
     local tabBtns      = {}
 
-    local TAB_COLORS = {
-        T.accent, T.accent, T.red, T.red, T.blue, T.purple, T.yellow,
-        T.blue, T.purple, T.rage, T.sub
-    }
-
     local function switchTab(idx)
-        for i,pg in ipairs(pages) do pg.Visible=(i==idx) end
-        for i,btn in ipairs(tabBtns) do
-            local ul=btn:FindFirstChildOfClass("Frame"); if ul then ul.Visible=(i==idx) end
-            if i==idx then tw(btn,{TextColor3=T.text}); btn.Font=Enum.Font.GothamBold
-            else tw(btn,{TextColor3=T.sub}); btn.Font=Enum.Font.Gotham end
+        for i, pg in ipairs(pages) do pg.Visible = (i == idx) end
+        for i, btn in ipairs(tabBtns) do
+            local ul = btn:FindFirstChildOfClass("Frame"); if ul then ul.Visible = (i == idx) end
+            if i == idx then tw(btn,{TextColor3=T.text}); btn.Font = Enum.Font.GothamBold
+            else tw(btn,{TextColor3=T.sub}); btn.Font = Enum.Font.Gotham end
         end
     end
 
-    local tW=W/#TABS
-    for i,name in ipairs(TABS) do
-        local btn=Instance.new("TextButton"); btn.Size=UDim2.new(0,tW,1,-1); btn.Position=UDim2.new(0,(i-1)*tW,0,0)
-        btn.BackgroundTransparency=1; btn.BorderSizePixel=0; btn.Text=name; btn.TextSize=10; btn.Font=Enum.Font.Gotham
-        btn.TextColor3=T.sub; btn.AutoButtonColor=false; btn.Parent=tabBar; tabBtns[i]=btn
-        local ul=Instance.new("Frame"); ul.Size=UDim2.new(0.55,0,0,2); ul.Position=UDim2.new(0.225,0,1,-2)
-        ul.BackgroundColor3=TAB_COLORS[i]; ul.BorderSizePixel=0; ul.Visible=(i==1); ul.Parent=btn; corner(ul,1)
+    local tW = W / #TABS
+    for i, name in ipairs(TABS) do
+        local btn = Instance.new("TextButton"); btn.Size = UDim2.new(0,tW,1,-1); btn.Position = UDim2.new(0,(i-1)*tW,0,0)
+        btn.BackgroundTransparency = 1; btn.BorderSizePixel = 0; btn.Text = name; btn.TextSize = 11; btn.Font = Enum.Font.Gotham
+        btn.TextColor3 = T.sub; btn.AutoButtonColor = false; btn.Parent = tabBar; tabBtns[i] = btn
+        local ul = Instance.new("Frame"); ul.Size = UDim2.new(0.55,0,0,2); ul.Position = UDim2.new(0.225,0,1,-2)
+        ul.BackgroundColor3 = T.accent; ul.BorderSizePixel = 0; ul.Visible = (i==1); ul.Parent = btn; corner(ul,1)
         btn.MouseButton1Click:Connect(function() switchTab(i) end)
     end
 
     -- ════════════════════════════════════════════════════════════════════
     --  OFFSET PAGE
     -- ════════════════════════════════════════════════════════════════════
-    local _,_,setX = makeSlider(offsetPage,"X  OFFSET",-150000,150000,state.x, function(v) state.x=v end)
-    local _,_,setY = makeSlider(offsetPage,"Y  OFFSET",-150000,150000,state.y, function(v) state.y=v end)
-    local _,_,setZ = makeSlider(offsetPage,"Z  OFFSET",-150000,150000,state.z, function(v) state.z=v end)
+    local _,_,setX = makeSlider(offsetPage,"X  OFFSET",-150000,150000,state.x,function(v) state.x=v end)
+    local _,_,setY = makeSlider(offsetPage,"Y  OFFSET",-150000,150000,state.y,function(v) state.y=v end)
+    local _,_,setZ = makeSlider(offsetPage,"Z  OFFSET",-150000,150000,state.z,function(v) state.z=v end)
 
-    local resetBtn=Instance.new("TextButton"); resetBtn.Size=UDim2.new(1,0,0,34)
-    resetBtn.BackgroundColor3=T.card; resetBtn.BorderSizePixel=0; resetBtn.Text="↺   Reset  ( 0 / 1000 / 0 )"
-    resetBtn.TextSize=12; resetBtn.Font=Enum.Font.Gotham; resetBtn.TextColor3=T.sub
-    resetBtn.AutoButtonColor=false; resetBtn.Parent=offsetPage; corner(resetBtn,8); stroke(resetBtn,T.border)
+    -- Reset button
+    local resetBtn = Instance.new("TextButton"); resetBtn.Size = UDim2.new(1,0,0,34)
+    resetBtn.BackgroundColor3 = T.card; resetBtn.BorderSizePixel = 0; resetBtn.Text = "↺   Reset  ( 0 / 1000 / 0 )"
+    resetBtn.TextSize = 12; resetBtn.Font = Enum.Font.Gotham; resetBtn.TextColor3 = T.sub
+    resetBtn.AutoButtonColor = false; resetBtn.Parent = offsetPage; corner(resetBtn,8); stroke(resetBtn,T.border)
     resetBtn.MouseEnter:Connect(function() tw(resetBtn,{BackgroundColor3=T.cardH,TextColor3=T.text}) end)
-    resetBtn.MouseLeave:Connect(function() tw(resetBtn,{BackgroundColor3=T.card, TextColor3=T.sub})  end)
+    resetBtn.MouseLeave:Connect(function() tw(resetBtn,{BackgroundColor3=T.card, TextColor3=T.sub}) end)
     resetBtn.MouseButton1Click:Connect(function()
-        state.x,state.y,state.z=0,1000,0; setX(0,false); setY(1000,false); setZ(0,false)
+        state.x,state.y,state.z = 0,1000,0; setX(0,false); setY(1000,false); setZ(0,false)
         tw(resetBtn,{BackgroundColor3=T.accentD}); task.delay(0.35,function() tw(resetBtn,{BackgroundColor3=T.card}) end)
     end)
 
-    sectionLabel(offsetPage,"FOLLOW MODE")
-    local stickCard, _setStickPill = makeToggleCard(
-        offsetPage,"📍  Stick to You","Spoof offset tracks your real position live",
-        state.stickEnabled,1,T.accent,
-        function(v)
-            state.stickEnabled = v
-            if not v then
-                local char = LocalPlayer.Character
-                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                spoofBasePos = hrp and hrp.Position or Vector3.zero
-            end
-            saveAll()
+    -- Toggles row: Stick + Random Dir
+    sectionLabel(offsetPage,"MODES")
+    local modesFrame = Instance.new("Frame"); modesFrame.Size = UDim2.new(1,0,0,0)
+    modesFrame.BackgroundTransparency = 1; modesFrame.AutomaticSize = Enum.AutomaticSize.Y
+    modesFrame.Parent = offsetPage; listLayout(modesFrame,6)
+
+    local function modeCard(parent, labelTxt, descTxt, initVal, onChange)
+        local card = Instance.new("Frame"); card.Size = UDim2.new(1,0,0,54)
+        card.BackgroundColor3 = T.card; card.BorderSizePixel = 0; card.Parent = parent; corner(card,10); stroke(card,T.border)
+        local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.new(1,-60,0,20); lbl.Position = UDim2.new(0,14,0,8)
+        lbl.BackgroundTransparency = 1; lbl.Text = labelTxt; lbl.TextSize = 13; lbl.Font = Enum.Font.GothamBold
+        lbl.TextColor3 = T.text; lbl.TextXAlignment = Enum.TextXAlignment.Left; lbl.Parent = card
+        local desc = Instance.new("TextLabel"); desc.Size = UDim2.new(1,-60,0,14); desc.Position = UDim2.new(0,14,0,30)
+        desc.BackgroundTransparency = 1; desc.Text = descTxt; desc.TextSize = 10; desc.Font = Enum.Font.Gotham
+        desc.TextColor3 = T.sub; desc.TextXAlignment = Enum.TextXAlignment.Left; desc.Parent = card
+        local _pill, setPill = makePillToggle(card, initVal, onChange)
+        _pill.Position = UDim2.new(1,-52,0.5,-11); _pill.Parent = card
+        card.MouseEnter:Connect(function() tw(card,{BackgroundColor3=T.cardH}) end)
+        card.MouseLeave:Connect(function() tw(card,{BackgroundColor3=T.card}) end)
+        return card, setPill
+    end
+
+    modeCard(modesFrame,"📌  Stick to You","Spoof tracks your real position",state.stickEnabled,function(v)
+        state.stickEnabled = v
+        if v then
+            local c = LocalPlayer.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
+            spoofBasePos = h and h.Position or spoofBasePos
         end
-    )
+        saveAll()
+    end)
+    modeCard(modesFrame,"🎲  Random Direction","Changes direction every 1.5 s",state.randomDir,function(v)
+        state.randomDir = v; state.randomDirVec = randomVec(); state.randomDirTimer = 0; saveAll()
+    end)
 
-    sectionLabel(offsetPage,"PRESETS")
-    local builtRow=Instance.new("Frame"); builtRow.Size=UDim2.new(1,0,0,36); builtRow.BackgroundTransparency=1; builtRow.Parent=offsetPage
-    listLayout(builtRow,6,Enum.FillDirection.Horizontal)
+    -- Built-in presets
+    sectionLabel(offsetPage,"QUICK PRESETS")
+    local builtRow = Instance.new("Frame"); builtRow.Size = UDim2.new(1,0,0,36)
+    builtRow.BackgroundTransparency = 1; builtRow.Parent = offsetPage; listLayout(builtRow,6,Enum.FillDirection.Horizontal)
 
-    local BUILTIN={
-        {name="Origin",  x=0,y=0,     z=0,    col=Color3.fromRGB(200,200,200)},
-        {name="Void",    x=0,y=-50000,z=0,    col=Color3.fromRGB(138,82,218)},
-        {name="Behind",  x=0,y=0,     z=50000,col=Color3.fromRGB(218,130,52)},
-        {name="Sky",     x=0,y=50000, z=0,    col=Color3.fromRGB(80,148,228)},
-        {name="Faraway", x=150000,y=0,z=150000,col=Color3.fromRGB(190,60,60)},
+    local BUILTIN = {
+        {name="Sky",     x=0,    y=150000, z=0,      col=Color3.fromRGB(80,148,228)},
+        {name="Void",    x=0,    y=-150000,z=0,      col=Color3.fromRGB(138,82,218)},
+        {name="Behind",  x=0,    y=0,      z=150000,  col=Color3.fromRGB(218,130,52)},
+        {name="Faraway", x=150000,y=0,     z=0,      col=Color3.fromRGB(218,82,82)},
+        {name="Origin",  x=0,    y=0,      z=0,      col=Color3.fromRGB(122,186,136)},
     }
-    local activeBuiltin, builtinBtns={}, {}
-
-    for i,p in ipairs(BUILTIN) do
-        local btn=Instance.new("TextButton"); btn.Size=UDim2.new(1/#BUILTIN,-(6*(#BUILTIN-1)/#BUILTIN),1,0); btn.BackgroundColor3=T.card
-        btn.BorderSizePixel=0; btn.Text=p.name; btn.TextSize=11; btn.Font=Enum.Font.GothamBold
-        btn.TextColor3=p.col; btn.AutoButtonColor=false; btn.LayoutOrder=i; btn.Parent=builtRow
-        corner(btn,8); stroke(btn,T.border); builtinBtns[p.name]=btn
-        btn.MouseEnter:Connect(function() if activeBuiltin~=p.name then tw(btn,{BackgroundColor3=T.cardH}) end end)
-        btn.MouseLeave:Connect(function() if activeBuiltin~=p.name then tw(btn,{BackgroundColor3=T.card}) end end)
+    local activeBuiltin, builtinBtns = nil, {}
+    for i, p in ipairs(BUILTIN) do
+        local btn = Instance.new("TextButton"); btn.Size = UDim2.new(1/#BUILTIN,-(6*(#BUILTIN-1)/#BUILTIN),1,0)
+        btn.BackgroundColor3 = T.card; btn.BorderSizePixel = 0; btn.Text = p.name; btn.TextSize = 10
+        btn.Font = Enum.Font.GothamBold; btn.TextColor3 = p.col; btn.AutoButtonColor = false; btn.LayoutOrder = i; btn.Parent = builtRow
+        corner(btn,8); stroke(btn,T.border); builtinBtns[p.name] = btn
+        btn.MouseEnter:Connect(function() if activeBuiltin ~= p.name then tw(btn,{BackgroundColor3=T.cardH}) end end)
+        btn.MouseLeave:Connect(function() if activeBuiltin ~= p.name then tw(btn,{BackgroundColor3=T.card}) end end)
         btn.MouseButton1Click:Connect(function()
-            if activeBuiltin==p.name then activeBuiltin=nil; tw(btn,{BackgroundColor3=T.card}); return end
+            if activeBuiltin == p.name then activeBuiltin = nil; tw(btn,{BackgroundColor3=T.card}); return end
             if activeBuiltin and builtinBtns[activeBuiltin] then tw(builtinBtns[activeBuiltin],{BackgroundColor3=T.card}) end
-            activeBuiltin=p.name; tw(btn,{BackgroundColor3=Color3.fromRGB(34,38,28)})
-            state.x,state.y,state.z=p.x,p.y,p.z; setX(p.x,false); setY(p.y,false); setZ(p.z,false)
+            activeBuiltin = p.name; tw(btn,{BackgroundColor3=Color3.fromRGB(34,38,28)})
+            state.x,state.y,state.z = p.x,p.y,p.z; setX(p.x,false); setY(p.y,false); setZ(p.z,false)
         end)
     end
 
+    -- Saved presets
     sectionLabel(offsetPage,"SAVED PRESETS")
-    local saveRow=Instance.new("Frame"); saveRow.Size=UDim2.new(1,0,0,36); saveRow.BackgroundColor3=T.card
-    saveRow.BorderSizePixel=0; saveRow.Parent=offsetPage; corner(saveRow,8); stroke(saveRow,T.border)
-    local nameBox=Instance.new("TextBox"); nameBox.Size=UDim2.new(1,-82,1,-10); nameBox.Position=UDim2.new(0,10,0,5)
-    nameBox.BackgroundColor3=T.surface; nameBox.BorderSizePixel=0; nameBox.PlaceholderText="Preset name..."
-    nameBox.PlaceholderColor3=T.sub; nameBox.Text=""; nameBox.TextColor3=T.text; nameBox.TextSize=12
-    nameBox.Font=Enum.Font.Gotham; nameBox.ClearTextOnFocus=false; nameBox.Parent=saveRow; corner(nameBox,6)
-    local saveBtn=Instance.new("TextButton"); saveBtn.Size=UDim2.new(0,64,1,-10); saveBtn.Position=UDim2.new(1,-72,0,5)
-    saveBtn.BackgroundColor3=T.accent; saveBtn.BorderSizePixel=0; saveBtn.Text="Save"
-    saveBtn.TextColor3=Color3.fromRGB(14,14,14); saveBtn.TextSize=12; saveBtn.Font=Enum.Font.GothamBold
-    saveBtn.AutoButtonColor=false; saveBtn.Parent=saveRow; corner(saveBtn,6)
-    saveBtn.MouseEnter:Connect(function() tw(saveBtn,{BackgroundColor3=T.accentH}) end)
-    saveBtn.MouseLeave:Connect(function() tw(saveBtn,{BackgroundColor3=T.accent}) end)
+    local saveRow = Instance.new("Frame"); saveRow.Size = UDim2.new(1,0,0,36)
+    saveRow.BackgroundColor3 = T.card; saveRow.BorderSizePixel = 0; saveRow.Parent = offsetPage; corner(saveRow,8); stroke(saveRow,T.border)
+    local nameBox = Instance.new("TextBox"); nameBox.Size = UDim2.new(1,-82,1,-10); nameBox.Position = UDim2.new(0,10,0,5)
+    nameBox.BackgroundColor3 = T.surface; nameBox.BorderSizePixel = 0; nameBox.PlaceholderText = "Preset name..."
+    nameBox.PlaceholderColor3 = T.sub; nameBox.Text = ""; nameBox.TextColor3 = T.text; nameBox.TextSize = 12
+    nameBox.Font = Enum.Font.Gotham; nameBox.ClearTextOnFocus = false; nameBox.Parent = saveRow; corner(nameBox,6)
+    local savePresetBtn = Instance.new("TextButton"); savePresetBtn.Size = UDim2.new(0,64,1,-10); savePresetBtn.Position = UDim2.new(1,-72,0,5)
+    savePresetBtn.BackgroundColor3 = T.accent; savePresetBtn.BorderSizePixel = 0; savePresetBtn.Text = "Save"
+    savePresetBtn.TextColor3 = Color3.fromRGB(14,14,14); savePresetBtn.TextSize = 12; savePresetBtn.Font = Enum.Font.GothamBold
+    savePresetBtn.AutoButtonColor = false; savePresetBtn.Parent = saveRow; corner(savePresetBtn,6)
+    savePresetBtn.MouseEnter:Connect(function() tw(savePresetBtn,{BackgroundColor3=T.accentH}) end)
+    savePresetBtn.MouseLeave:Connect(function() tw(savePresetBtn,{BackgroundColor3=T.accent}) end)
 
-    local customFrame=Instance.new("Frame"); customFrame.Size=UDim2.new(1,0,0,0); customFrame.BackgroundTransparency=1
-    customFrame.AutomaticSize=Enum.AutomaticSize.Y; customFrame.Parent=offsetPage; listLayout(customFrame,4)
+    local customFrame = Instance.new("Frame"); customFrame.Size = UDim2.new(1,0,0,0)
+    customFrame.BackgroundTransparency = 1; customFrame.AutomaticSize = Enum.AutomaticSize.Y; customFrame.Parent = offsetPage
+    listLayout(customFrame,4)
 
-    local customRows={}
+    local customRows = {}
     local function rebuildCustom()
-        for _,r in pairs(customRows) do r:Destroy() end; customRows={}
-        for i,cp in ipairs(customPresets) do
-            local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,38); row.LayoutOrder=i
-            row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=customFrame; corner(row,8); table.insert(customRows,row)
-            local applyBtn=Instance.new("TextButton"); applyBtn.Size=UDim2.new(1,-50,1,0); applyBtn.BackgroundTransparency=1
-            applyBtn.AutoButtonColor=false; applyBtn.TextXAlignment=Enum.TextXAlignment.Left; applyBtn.Parent=row
-            local nameLbl=Instance.new("TextLabel"); nameLbl.Size=UDim2.new(1,0,0,18); nameLbl.Position=UDim2.new(0,0,0,4)
-            nameLbl.BackgroundTransparency=1; nameLbl.Text=cp.name; nameLbl.TextSize=12; nameLbl.Font=Enum.Font.GothamBold
-            nameLbl.TextColor3=T.accent; nameLbl.TextXAlignment=Enum.TextXAlignment.Left; nameLbl.Parent=applyBtn
-            local lp=Instance.new("UIPadding"); lp.PaddingLeft=UDim.new(0,10); lp.Parent=nameLbl
-            local coordLbl=Instance.new("TextLabel"); coordLbl.Size=UDim2.new(1,0,0,12); coordLbl.Position=UDim2.new(0,0,1,-14)
-            coordLbl.BackgroundTransparency=1; coordLbl.Text=cp.x.." / "..cp.y.." / "..cp.z
-            coordLbl.TextSize=9; coordLbl.Font=Enum.Font.Gotham; coordLbl.TextColor3=T.sub
-            coordLbl.TextXAlignment=Enum.TextXAlignment.Left; coordLbl.Parent=applyBtn
-            local cp2=Instance.new("UIPadding"); cp2.PaddingLeft=UDim.new(0,10); cp2.Parent=coordLbl
+        for _,r in pairs(customRows) do r:Destroy() end; customRows = {}
+        for i, cp in ipairs(customPresets) do
+            local row = Instance.new("Frame"); row.Size = UDim2.new(1,0,0,38); row.LayoutOrder = i
+            row.BackgroundColor3 = T.card; row.BorderSizePixel = 0; row.Parent = customFrame; corner(row,8); table.insert(customRows,row)
+            local applyBtn = Instance.new("TextButton"); applyBtn.Size = UDim2.new(1,-50,1,0); applyBtn.BackgroundTransparency = 1
+            applyBtn.AutoButtonColor = false; applyBtn.TextXAlignment = Enum.TextXAlignment.Left; applyBtn.Parent = row
+            local nameLbl = Instance.new("TextLabel"); nameLbl.Size = UDim2.new(1,0,0,18); nameLbl.Position = UDim2.new(0,0,0,4)
+            nameLbl.BackgroundTransparency = 1; nameLbl.Text = cp.name; nameLbl.TextSize = 12; nameLbl.Font = Enum.Font.GothamBold
+            nameLbl.TextColor3 = T.accent; nameLbl.TextXAlignment = Enum.TextXAlignment.Left; nameLbl.Parent = applyBtn
+            local lp = Instance.new("UIPadding"); lp.PaddingLeft = UDim.new(0,10); lp.Parent = nameLbl
+            local coordLbl = Instance.new("TextLabel"); coordLbl.Size = UDim2.new(1,0,0,12); coordLbl.Position = UDim2.new(0,0,1,-14)
+            coordLbl.BackgroundTransparency = 1; coordLbl.Text = cp.x.." / "..cp.y.." / "..cp.z
+            coordLbl.TextSize = 9; coordLbl.Font = Enum.Font.Gotham; coordLbl.TextColor3 = T.sub
+            coordLbl.TextXAlignment = Enum.TextXAlignment.Left; coordLbl.Parent = applyBtn
+            local lp2 = Instance.new("UIPadding"); lp2.PaddingLeft = UDim.new(0,10); lp2.Parent = coordLbl
             applyBtn.MouseButton1Click:Connect(function()
-                state.x,state.y,state.z=cp.x,cp.y,cp.z; setX(cp.x,false); setY(cp.y,false); setZ(cp.z,false)
+                state.x,state.y,state.z = cp.x,cp.y,cp.z; setX(cp.x,false); setY(cp.y,false); setZ(cp.z,false)
                 tw(row,{BackgroundColor3=T.accentD}); task.delay(0.3,function() tw(row,{BackgroundColor3=T.card}) end)
             end)
-            local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0,26,0,26); delBtn.Position=UDim2.new(1,-34,0.5,-13)
-            delBtn.BackgroundColor3=T.red; delBtn.BorderSizePixel=0; delBtn.Text="✕"; delBtn.TextColor3=Color3.fromRGB(255,255,255)
-            delBtn.TextSize=10; delBtn.Font=Enum.Font.GothamBold; delBtn.AutoButtonColor=false; delBtn.Parent=row; corner(delBtn,5)
+            local delBtn = Instance.new("TextButton"); delBtn.Size = UDim2.new(0,26,0,26); delBtn.Position = UDim2.new(1,-34,0.5,-13)
+            delBtn.BackgroundColor3 = T.red; delBtn.BorderSizePixel = 0; delBtn.Text = "✕"; delBtn.TextColor3 = Color3.fromRGB(255,255,255)
+            delBtn.TextSize = 10; delBtn.Font = Enum.Font.GothamBold; delBtn.AutoButtonColor = false; delBtn.Parent = row; corner(delBtn,5)
             delBtn.MouseEnter:Connect(function() tw(delBtn,{BackgroundColor3=T.redH}) end)
             delBtn.MouseLeave:Connect(function() tw(delBtn,{BackgroundColor3=T.red}) end)
-            local ci=i; delBtn.MouseButton1Click:Connect(function() table.remove(customPresets,ci); saveAll(); rebuildCustom() end)
+            local ci = i; delBtn.MouseButton1Click:Connect(function() table.remove(customPresets,ci); saveAll(); rebuildCustom() end)
             row.MouseEnter:Connect(function() tw(row,{BackgroundColor3=T.cardH}) end)
             row.MouseLeave:Connect(function() tw(row,{BackgroundColor3=T.card}) end)
         end
     end
 
-    saveBtn.MouseButton1Click:Connect(function()
-        local n=nameBox.Text:match("^%s*(.-)%s*$")
-        if n=="" then tw(nameBox,{BackgroundColor3=Color3.fromRGB(48,18,18)}); task.delay(0.5,function() tw(nameBox,{BackgroundColor3=T.surface}) end); return end
-        table.insert(customPresets,{name=n,x=state.x,y=state.y,z=state.z}); saveAll(); nameBox.Text=""
-        saveBtn.Text="✓"; tw(saveBtn,{BackgroundColor3=T.accentH})
-        task.delay(0.8,function() saveBtn.Text="Save"; tw(saveBtn,{BackgroundColor3=T.accent}) end); rebuildCustom()
+    savePresetBtn.MouseButton1Click:Connect(function()
+        local n = nameBox.Text:match("^%s*(.-)%s*$")
+        if n == "" then
+            tw(nameBox,{BackgroundColor3=Color3.fromRGB(48,18,18)}); task.delay(0.5,function() tw(nameBox,{BackgroundColor3=T.surface}) end); return
+        end
+        customPresets[#customPresets+1] = {name=n, x=state.x, y=state.y, z=state.z}; saveAll(); nameBox.Text = ""
+        savePresetBtn.Text = "✓"; tw(savePresetBtn,{BackgroundColor3=T.accentH})
+        task.delay(0.8,function() savePresetBtn.Text = "Save"; tw(savePresetBtn,{BackgroundColor3=T.accent}) end)
+        rebuildCustom()
     end)
     rebuildCustom()
 
     -- ════════════════════════════════════════════════════════════════════
-    --  TARGETS PAGE  (with search)
+    --  TARGETS PAGE
     -- ════════════════════════════════════════════════════════════════════
-    local targetSearchQuery = ""
-    local _targetSearchBar, targetSearchBox = makeSearchBar(targetPage, -1, T.accentD, function(q)
-        targetSearchQuery = q
-        -- rebuildTargets is declared below; Lua forward-ref is fine via upvalue
-    end)
+    -- Search box
+    local searchBox = Instance.new("TextBox"); searchBox.Size = UDim2.new(1,0,0,32)
+    searchBox.BackgroundColor3 = T.card; searchBox.BorderSizePixel = 0; searchBox.PlaceholderText = "🔍  Search players..."
+    searchBox.PlaceholderColor3 = T.sub; searchBox.Text = ""; searchBox.TextColor3 = T.text
+    searchBox.TextSize = 12; searchBox.Font = Enum.Font.Gotham; searchBox.ClearTextOnFocus = false
+    searchBox.Parent = targetPage; corner(searchBox,8); stroke(searchBox,T.border)
+    local sbPad = Instance.new("UIPadding"); sbPad.PaddingLeft = UDim.new(0,10); sbPad.PaddingRight = UDim.new(0,10); sbPad.Parent = searchBox
 
     local targetRowsList = {}
     local function rebuildTargets()
+        local query = (searchBox.Text or ""):lower():match("^%s*(.-)%s*$")
         for _,r in pairs(targetRowsList) do r:Destroy() end; targetRowsList = {}
-        local q = targetSearchQuery:lower()
 
-        -- "Target All" row — always visible
-        local taRow=Instance.new("Frame"); taRow.Size=UDim2.new(1,0,0,50); taRow.LayoutOrder=0
-        taRow.BackgroundColor3=T.card; taRow.BorderSizePixel=0; taRow.Parent=targetPage; corner(taRow,10)
-        stroke(taRow,state.targetAll and T.accentD or T.border,state.targetAll and 1.5 or 1); table.insert(targetRowsList,taRow)
-        local taIconF=Instance.new("Frame"); taIconF.Size=UDim2.new(0,38,0,38); taIconF.Position=UDim2.new(0,6,0.5,-19)
-        taIconF.BackgroundColor3=state.targetAll and T.accentD or T.surface; taIconF.BorderSizePixel=0; taIconF.Parent=taRow; corner(taIconF,19)
-        local taIconL=Instance.new("TextLabel"); taIconL.Size=UDim2.new(1,0,1,0); taIconL.BackgroundTransparency=1; taIconL.Text="★"
-        taIconL.TextSize=16; taIconL.Font=Enum.Font.GothamBold; taIconL.TextColor3=state.targetAll and T.accent or T.sub
-        taIconL.TextXAlignment=Enum.TextXAlignment.Center; taIconL.Parent=taIconF
-        local function rowLabel(parent,text,size,font,color,pos,sz)
-            local l=Instance.new("TextLabel"); l.Size=sz; l.Position=pos; l.BackgroundTransparency=1; l.Text=text
-            l.TextSize=size; l.Font=font; l.TextColor3=color; l.TextXAlignment=Enum.TextXAlignment.Left; l.Parent=parent; return l
-        end
-        rowLabel(taRow,"Target All",13,Enum.Font.GothamBold,state.targetAll and T.text or T.sub,UDim2.new(0,52,0,7),UDim2.new(1,-106,0,18))
-        rowLabel(taRow,"Spoofs every player in server",10,Enum.Font.Gotham,T.sub,UDim2.new(0,52,0,26),UDim2.new(1,-106,0,13))
-        local taPill=Instance.new("Frame"); taPill.Size=UDim2.new(0,40,0,22); taPill.Position=UDim2.new(1,-48,0.5,-11)
-        taPill.BackgroundColor3=state.targetAll and T.accent or T.border; taPill.BorderSizePixel=0; taPill.Parent=taRow; corner(taPill,11)
-        local taPT=Instance.new("Frame"); taPT.Size=UDim2.new(0,15,0,15)
-        taPT.Position=state.targetAll and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-        taPT.BackgroundColor3=Color3.fromRGB(240,240,240); taPT.BorderSizePixel=0; taPT.Parent=taPill; corner(taPT,8)
-        local taClick=Instance.new("TextButton"); taClick.Size=UDim2.new(1,0,1,0); taClick.BackgroundTransparency=1; taClick.Text=""; taClick.Parent=taRow
+        -- Target All row
+        local taRow = Instance.new("Frame"); taRow.Size = UDim2.new(1,0,0,50); taRow.LayoutOrder = 0
+        taRow.BackgroundColor3 = T.card; taRow.BorderSizePixel = 0; taRow.Parent = targetPage; corner(taRow,10)
+        stroke(taRow, state.targetAll and T.accentD or T.border, state.targetAll and 1.5 or 1)
+        table.insert(targetRowsList, taRow)
+        local taIconF = Instance.new("Frame"); taIconF.Size = UDim2.new(0,38,0,38); taIconF.Position = UDim2.new(0,6,0.5,-19)
+        taIconF.BackgroundColor3 = state.targetAll and T.accentD or T.surface; taIconF.BorderSizePixel = 0; taIconF.Parent = taRow; corner(taIconF,19)
+        local taIconL = Instance.new("TextLabel"); taIconL.Size = UDim2.new(1,0,1,0); taIconL.BackgroundTransparency = 1; taIconL.Text = "★"
+        taIconL.TextSize = 16; taIconL.Font = Enum.Font.GothamBold; taIconL.TextColor3 = state.targetAll and T.accent or T.sub
+        taIconL.TextXAlignment = Enum.TextXAlignment.Center; taIconL.Parent = taIconF
+        local taName = Instance.new("TextLabel"); taName.Size = UDim2.new(1,-106,0,18); taName.Position = UDim2.new(0,52,0,7)
+        taName.BackgroundTransparency = 1; taName.Text = "Target All"; taName.TextSize = 13; taName.Font = Enum.Font.GothamBold
+        taName.TextColor3 = state.targetAll and T.text or T.sub; taName.TextXAlignment = Enum.TextXAlignment.Left; taName.Parent = taRow
+        local taDesc = Instance.new("TextLabel"); taDesc.Size = UDim2.new(1,-106,0,13); taDesc.Position = UDim2.new(0,52,0,26)
+        taDesc.BackgroundTransparency = 1; taDesc.Text = "Spoofs every player in server"
+        taDesc.TextSize = 10; taDesc.Font = Enum.Font.Gotham; taDesc.TextColor3 = T.sub; taDesc.TextXAlignment = Enum.TextXAlignment.Left; taDesc.Parent = taRow
+        local taPill = Instance.new("Frame"); taPill.Size = UDim2.new(0,40,0,22); taPill.Position = UDim2.new(1,-48,0.5,-11)
+        taPill.BackgroundColor3 = state.targetAll and T.accent or T.border; taPill.BorderSizePixel = 0; taPill.Parent = taRow; corner(taPill,11)
+        local taPT = Instance.new("Frame"); taPT.Size = UDim2.new(0,15,0,15)
+        taPT.Position = state.targetAll and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
+        taPT.BackgroundColor3 = Color3.fromRGB(240,240,240); taPT.BorderSizePixel = 0; taPT.Parent = taPill; corner(taPT,8)
+        local taClick = Instance.new("TextButton"); taClick.Size = UDim2.new(1,0,1,0); taClick.BackgroundTransparency = 1; taClick.Text = ""; taClick.Parent = taRow
         taClick.MouseButton1Click:Connect(function()
-            state.targetAll=not state.targetAll; state.enabled=state.targetAll
-            if state.enabled then startSpoof() end; refreshAllESP(); saveAll(); updateStatus(); rebuildTargets()
+            state.targetAll = not state.targetAll; state.enabled = state.targetAll
+            if state.enabled then startSpoof() end; updateStatus(); rebuildTargets()
         end)
         taRow.MouseEnter:Connect(function() tw(taRow,{BackgroundColor3=T.cardH}) end)
         taRow.MouseLeave:Connect(function() tw(taRow,{BackgroundColor3=T.card}) end)
 
-        -- Per-player rows (filtered by search)
-        local idx = 0
-        for _, p in ipairs(Players:GetPlayers()) do
+        -- Per-player rows
+        for idx, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then
-                local dn = p.DisplayName:lower()
-                local un = p.Name:lower()
-                if q == "" or dn:find(q, 1, true) or un:find(q, 1, true) then
-                    idx = idx + 1
-                    local active=targeted[p.Name]==true
-                    local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,54); row.LayoutOrder=idx
-                    row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=targetPage; corner(row,10)
-                    stroke(row,active and T.accentD or T.border,active and 1.5 or 1); table.insert(targetRowsList,row)
-                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,7,0.5,-20)
-                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=row; corner(avaCircle,20)
+                local nameMatch = query == "" or
+                    p.Name:lower():find(query,1,true) or
+                    p.DisplayName:lower():find(query,1,true)
+                if nameMatch then
+                    local active = targeted[p.Name] == true
+                    local row = Instance.new("Frame"); row.Size = UDim2.new(1,0,0,54); row.LayoutOrder = idx
+                    row.BackgroundColor3 = T.card; row.BorderSizePixel = 0; row.Parent = targetPage; corner(row,10)
+                    stroke(row, active and T.accentD or T.border, active and 1.5 or 1); table.insert(targetRowsList,row)
+                    local avaCircle = Instance.new("Frame"); avaCircle.Size = UDim2.new(0,40,0,40); avaCircle.Position = UDim2.new(0,7,0.5,-20)
+                    avaCircle.BackgroundColor3 = T.surface; avaCircle.BorderSizePixel = 0; avaCircle.ClipsDescendants = true; avaCircle.Parent = row; corner(avaCircle,20)
                     if active then stroke(avaCircle,T.accent,2) end
-                    local avaImg=Instance.new("ImageLabel"); avaImg.Size=UDim2.new(1,0,1,0); avaImg.BackgroundTransparency=1; avaImg.Image=""; avaImg.Parent=avaCircle
-                    local uid=p.UserId; task.spawn(function()
-                        local ok,img=pcall(function() return Players:GetUserThumbnailAsync(uid,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end)
-                        if ok and img then avaImg.Image=img end
+                    local avaImg = Instance.new("ImageLabel"); avaImg.Size = UDim2.new(1,0,1,0); avaImg.BackgroundTransparency = 1; avaImg.Image = ""; avaImg.Parent = avaCircle
+                    local uid = p.UserId
+                    task.spawn(function()
+                        local ok,img = pcall(function() return Players:GetUserThumbnailAsync(uid,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end)
+                        if ok and img then avaImg.Image = img end
                     end)
-                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-106,0,18); dispN.Position=UDim2.new(0,55,0,9)
-                    dispN.BackgroundTransparency=1; dispN.Text=p.DisplayName; dispN.TextSize=13; dispN.Font=Enum.Font.GothamBold
-                    dispN.TextColor3=active and T.text or T.sub; dispN.TextXAlignment=Enum.TextXAlignment.Left; dispN.TextTruncate=Enum.TextTruncate.AtEnd; dispN.Parent=row
-                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-106,0,13); userN.Position=UDim2.new(0,55,0,29)
-                    userN.BackgroundTransparency=1; userN.Text="@"..p.Name; userN.TextSize=10; userN.Font=Enum.Font.Gotham
-                    userN.TextColor3=T.sub; userN.TextXAlignment=Enum.TextXAlignment.Left; userN.TextTruncate=Enum.TextTruncate.AtEnd; userN.Parent=row
-                    local pPill=Instance.new("Frame"); pPill.Size=UDim2.new(0,40,0,22); pPill.Position=UDim2.new(1,-48,0.5,-11)
-                    pPill.BackgroundColor3=active and T.accent or T.border; pPill.BorderSizePixel=0; pPill.Parent=row; corner(pPill,11)
-                    local pPT=Instance.new("Frame"); pPT.Size=UDim2.new(0,15,0,15)
-                    pPT.Position=active and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-                    pPT.BackgroundColor3=Color3.fromRGB(240,240,240); pPT.BorderSizePixel=0; pPT.Parent=pPill; corner(pPT,8)
-                    local clickable=Instance.new("TextButton"); clickable.Size=UDim2.new(1,0,1,0); clickable.BackgroundTransparency=1; clickable.Text=""; clickable.Parent=row
-                    local pName=p.Name
+                    local dispN = Instance.new("TextLabel"); dispN.Size = UDim2.new(1,-106,0,18); dispN.Position = UDim2.new(0,55,0,9)
+                    dispN.BackgroundTransparency = 1; dispN.Text = p.DisplayName; dispN.TextSize = 13; dispN.Font = Enum.Font.GothamBold
+                    dispN.TextColor3 = active and T.text or T.sub; dispN.TextXAlignment = Enum.TextXAlignment.Left; dispN.TextTruncate = Enum.TextTruncate.AtEnd; dispN.Parent = row
+                    local userN = Instance.new("TextLabel"); userN.Size = UDim2.new(1,-106,0,13); userN.Position = UDim2.new(0,55,0,29)
+                    userN.BackgroundTransparency = 1; userN.Text = "@"..p.Name; userN.TextSize = 10; userN.Font = Enum.Font.Gotham
+                    userN.TextColor3 = T.sub; userN.TextXAlignment = Enum.TextXAlignment.Left; userN.TextTruncate = Enum.TextTruncate.AtEnd; userN.Parent = row
+                    local pPill = Instance.new("Frame"); pPill.Size = UDim2.new(0,40,0,22); pPill.Position = UDim2.new(1,-48,0.5,-11)
+                    pPill.BackgroundColor3 = active and T.accent or T.border; pPill.BorderSizePixel = 0; pPill.Parent = row; corner(pPill,11)
+                    local pPT = Instance.new("Frame"); pPT.Size = UDim2.new(0,15,0,15)
+                    pPT.Position = active and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
+                    pPT.BackgroundColor3 = Color3.fromRGB(240,240,240); pPT.BorderSizePixel = 0; pPT.Parent = pPill; corner(pPT,8)
+                    local clickable = Instance.new("TextButton"); clickable.Size = UDim2.new(1,0,1,0); clickable.BackgroundTransparency = 1; clickable.Text = ""; clickable.Parent = row
+                    local pName = p.Name
                     clickable.MouseButton1Click:Connect(function()
-                        targeted[pName]=not targeted[pName]
-                        local any=false; for _,v in pairs(targeted) do if v then any=true end end
-                        state.enabled=any or state.targetAll
-                        if state.enabled then startSpoof() end
-                        updateStatus(); rebuildTargets()
+                        targeted[pName] = not targeted[pName]
+                        local any = false; for _,v in pairs(targeted) do if v then any = true end end
+                        state.enabled = any or state.targetAll
+                        if state.enabled then startSpoof() end; updateStatus(); rebuildTargets()
                     end)
                     row.MouseEnter:Connect(function() tw(row,{BackgroundColor3=T.cardH}) end)
                     row.MouseLeave:Connect(function() tw(row,{BackgroundColor3=T.card}) end)
                 end
             end
         end
-
-        -- "No results" label when search yields nothing
-        if idx == 0 and q ~= "" then
-            local noRes=Instance.new("TextLabel"); noRes.Size=UDim2.new(1,0,0,36); noRes.LayoutOrder=1
-            noRes.BackgroundTransparency=1; noRes.Text='No players match "'..targetSearchQuery..'"'
-            noRes.TextSize=11; noRes.Font=Enum.Font.Gotham; noRes.TextColor3=T.sub
-            noRes.TextXAlignment=Enum.TextXAlignment.Center; noRes.Parent=targetPage
-            table.insert(targetRowsList, noRes)
-        end
     end
 
-    -- Wire search box now that rebuildTargets is defined
-    targetSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        targetSearchQuery = targetSearchBox.Text
-        rebuildTargets()
-    end)
-
+    searchBox:GetPropertyChangedSignal("Text"):Connect(rebuildTargets)
     Players.PlayerAdded:Connect(rebuildTargets)
-    Players.PlayerRemoving:Connect(function(p) targeted[p.Name]=nil; rebuildTargets() end)
-
-    -- ════════════════════════════════════════════════════════════════════
-    --  ORBIT PAGE
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(orbitPage,"ORBIT CONTROLS",0)
-
-    local orbitInfoCard=Instance.new("Frame"); orbitInfoCard.Size=UDim2.new(1,0,0,60); orbitInfoCard.LayoutOrder=1
-    orbitInfoCard.BackgroundColor3=Color3.fromRGB(55,18,18); orbitInfoCard.BorderSizePixel=0; orbitInfoCard.Parent=orbitPage; corner(orbitInfoCard,10)
-    local orbitInfoLbl=Instance.new("TextLabel"); orbitInfoLbl.Size=UDim2.new(1,-16,1,0); orbitInfoLbl.Position=UDim2.new(0,12,0,0)
-    orbitInfoLbl.BackgroundTransparency=1; orbitInfoLbl.TextSize=10; orbitInfoLbl.Font=Enum.Font.Gotham
-    orbitInfoLbl.TextColor3=Color3.fromRGB(255,160,160); orbitInfoLbl.TextXAlignment=Enum.TextXAlignment.Left
-    orbitInfoLbl.TextWrapped=true
-    orbitInfoLbl.Text="🔴  Orbits targeted players around your position.\nAdjust speed, distance and height below."
-    orbitInfoLbl.Parent=orbitInfoCard
-
-    local _orbitCard, _setOrbitPill = makeToggleCard(
-        orbitPage,"🔴  Enable Orbit","Continuously orbit targets around you",
-        state.orbitEnabled,2,T.red,
-        function(v)
-            state.orbitEnabled=v
-            if v then startOrbit() else stopOrbit() end
-            saveAll()
-        end
-    )
-
-    sectionLabel(orbitPage,"ORBIT MODE",3)
-    local orbitModeCard=Instance.new("Frame"); orbitModeCard.Size=UDim2.new(1,0,0,54); orbitModeCard.LayoutOrder=4
-    orbitModeCard.BackgroundColor3=T.card; orbitModeCard.BorderSizePixel=0; orbitModeCard.Parent=orbitPage; corner(orbitModeCard,10); stroke(orbitModeCard,T.border)
-    local orbitModeLbl=Instance.new("TextLabel"); orbitModeLbl.Size=UDim2.new(1,-60,0,20); orbitModeLbl.Position=UDim2.new(0,14,0,8)
-    orbitModeLbl.BackgroundTransparency=1; orbitModeLbl.TextSize=13; orbitModeLbl.Font=Enum.Font.GothamBold
-    orbitModeLbl.TextColor3=T.text; orbitModeLbl.TextXAlignment=Enum.TextXAlignment.Left; orbitModeLbl.Parent=orbitModeCard
-    local orbitModeDesc=Instance.new("TextLabel"); orbitModeDesc.Size=UDim2.new(1,-60,0,14); orbitModeDesc.Position=UDim2.new(0,14,0,30)
-    orbitModeDesc.BackgroundTransparency=1; orbitModeDesc.TextSize=10; orbitModeDesc.Font=Enum.Font.Gotham
-    orbitModeDesc.TextColor3=T.sub; orbitModeDesc.TextXAlignment=Enum.TextXAlignment.Left; orbitModeDesc.Parent=orbitModeCard
-
-    local function updateOrbitModeLabels()
-        if state.orbitReverse then
-            orbitModeLbl.Text="🧍  You orbit the target"
-            orbitModeDesc.Text="Your character circles around the target"
-        else
-            orbitModeLbl.Text="🎯  Target orbits you"
-            orbitModeDesc.Text="Target's position circles around you"
-        end
-    end
-    updateOrbitModeLabels()
-
-    local _orbitModePill, setOrbitModePill = makePillToggleColored(orbitModeCard, state.orbitReverse, T.red, T.border, function(v)
-        state.orbitReverse = v; updateOrbitModeLabels(); saveAll()
-    end)
-    _orbitModePill.Position=UDim2.new(1,-52,0.5,-11); _orbitModePill.Parent=orbitModeCard
-    orbitModeCard.MouseEnter:Connect(function() tw(orbitModeCard,{BackgroundColor3=T.cardH}) end)
-    orbitModeCard.MouseLeave:Connect(function() tw(orbitModeCard,{BackgroundColor3=T.card}) end)
-
-    sectionLabel(orbitPage,"ORBIT SETTINGS",5)
-    local _,_,setOrbitSpeed    = makeSlider(orbitPage,"ORBIT SPEED",1,150000,state.orbitSpeed,   function(v) state.orbitSpeed=v;    saveAll() end, T.red)
-    local _,_,setOrbitDistance = makeSlider(orbitPage,"DISTANCE",   1,150000,state.orbitDistance,function(v) state.orbitDistance=v; saveAll() end, T.red)
-    local _,_,setOrbitHeight   = makeSlider(orbitPage,"HEIGHT",     -150000,150000,state.orbitHeight,  function(v) state.orbitHeight=v;  saveAll() end, T.red)
-
-    sectionLabel(orbitPage,"DIRECTION",7)
-    local randOrbitCard=Instance.new("Frame"); randOrbitCard.Size=UDim2.new(1,0,0,54); randOrbitCard.LayoutOrder=8
-    randOrbitCard.BackgroundColor3=T.card; randOrbitCard.BorderSizePixel=0; randOrbitCard.Parent=orbitPage; corner(randOrbitCard,10); stroke(randOrbitCard,T.border)
-    local randOrbitLbl=Instance.new("TextLabel"); randOrbitLbl.Size=UDim2.new(1,-60,0,20); randOrbitLbl.Position=UDim2.new(0,14,0,8)
-    randOrbitLbl.BackgroundTransparency=1; randOrbitLbl.Text="🎲  Random Direction"; randOrbitLbl.TextSize=13; randOrbitLbl.Font=Enum.Font.GothamBold
-    randOrbitLbl.TextColor3=T.text; randOrbitLbl.TextXAlignment=Enum.TextXAlignment.Left; randOrbitLbl.Parent=randOrbitCard
-    local randOrbitDesc=Instance.new("TextLabel"); randOrbitDesc.Size=UDim2.new(1,-60,0,14); randOrbitDesc.Position=UDim2.new(0,14,0,30)
-    randOrbitDesc.BackgroundTransparency=1; randOrbitDesc.Text="Randomly flip orbit direction every ~2s"; randOrbitDesc.TextSize=10; randOrbitDesc.Font=Enum.Font.Gotham
-    randOrbitDesc.TextColor3=T.sub; randOrbitDesc.TextXAlignment=Enum.TextXAlignment.Left; randOrbitDesc.Parent=randOrbitCard
-    local _randOrbitPill, setRandOrbitPill = makePillToggleColored(randOrbitCard, state.randomDir, T.yellow, T.border, function(v)
-        state.randomDir = v; saveAll()
-    end)
-    _randOrbitPill.Position=UDim2.new(1,-52,0.5,-11); _randOrbitPill.Parent=randOrbitCard
-    randOrbitCard.MouseEnter:Connect(function() tw(randOrbitCard,{BackgroundColor3=T.cardH}) end)
-    randOrbitCard.MouseLeave:Connect(function() tw(randOrbitCard,{BackgroundColor3=T.card}) end)
-
-    -- ════════════════════════════════════════════════════════════════════
-    --  ORBIT TARGETS PAGE  (with search)
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(orbitTargetPage,"ORBIT TARGETS",0)
-
-    local orbitTargetInfoCard=Instance.new("Frame"); orbitTargetInfoCard.Size=UDim2.new(1,0,0,52); orbitTargetInfoCard.LayoutOrder=1
-    orbitTargetInfoCard.BackgroundColor3=Color3.fromRGB(55,18,18); orbitTargetInfoCard.BorderSizePixel=0; orbitTargetInfoCard.Parent=orbitTargetPage; corner(orbitTargetInfoCard,10)
-    local orbitTargetInfoLbl=Instance.new("TextLabel"); orbitTargetInfoLbl.Size=UDim2.new(1,-16,1,0); orbitTargetInfoLbl.Position=UDim2.new(0,12,0,0)
-    orbitTargetInfoLbl.BackgroundTransparency=1; orbitTargetInfoLbl.TextSize=10; orbitTargetInfoLbl.Font=Enum.Font.Gotham
-    orbitTargetInfoLbl.TextColor3=Color3.fromRGB(255,160,160); orbitTargetInfoLbl.TextXAlignment=Enum.TextXAlignment.Left
-    orbitTargetInfoLbl.TextWrapped=true
-    orbitTargetInfoLbl.Text="🔴  Choose which players the Orbit system affects.\nThis is separate from Position Spoof targets."
-    orbitTargetInfoLbl.Parent=orbitTargetInfoCard
-
-    -- Search bar for orbit targets (LayoutOrder=2, after info card)
-    local orbitSearchQuery = ""
-    local _orbitSearchBar, orbitSearchBox = makeSearchBar(orbitTargetPage, 2, Color3.fromRGB(80,18,18), function(q)
-        orbitSearchQuery = q
-    end)
-
-    local orbitTargetRowsList={}
-    local function rebuildOrbitTargets()
-        for _,r in pairs(orbitTargetRowsList) do r:Destroy() end; orbitTargetRowsList={}
-        local q = orbitSearchQuery:lower()
-
-        -- Target All row — always visible
-        local taRow=Instance.new("Frame"); taRow.Size=UDim2.new(1,0,0,50); taRow.LayoutOrder=3
-        taRow.BackgroundColor3=T.card; taRow.BorderSizePixel=0; taRow.Parent=orbitTargetPage; corner(taRow,10)
-        stroke(taRow,state.targetAll and T.red or T.border,state.targetAll and 1.5 or 1); table.insert(orbitTargetRowsList,taRow)
-        local taIconF=Instance.new("Frame"); taIconF.Size=UDim2.new(0,38,0,38); taIconF.Position=UDim2.new(0,6,0.5,-19)
-        taIconF.BackgroundColor3=state.targetAll and Color3.fromRGB(55,18,18) or T.surface; taIconF.BorderSizePixel=0; taIconF.Parent=taRow; corner(taIconF,19)
-        local taIconL=Instance.new("TextLabel"); taIconL.Size=UDim2.new(1,0,1,0); taIconL.BackgroundTransparency=1; taIconL.Text="★"
-        taIconL.TextSize=16; taIconL.Font=Enum.Font.GothamBold; taIconL.TextColor3=state.targetAll and T.red or T.sub
-        taIconL.TextXAlignment=Enum.TextXAlignment.Center; taIconL.Parent=taIconF
-        local oTaLbl=Instance.new("TextLabel"); oTaLbl.Size=UDim2.new(1,-106,0,18); oTaLbl.Position=UDim2.new(0,52,0,7)
-        oTaLbl.BackgroundTransparency=1; oTaLbl.Text="Orbit All"; oTaLbl.TextSize=13; oTaLbl.Font=Enum.Font.GothamBold
-        oTaLbl.TextColor3=state.targetAll and T.text or T.sub; oTaLbl.TextXAlignment=Enum.TextXAlignment.Left; oTaLbl.Parent=taRow
-        local oTaDesc=Instance.new("TextLabel"); oTaDesc.Size=UDim2.new(1,-106,0,13); oTaDesc.Position=UDim2.new(0,52,0,26)
-        oTaDesc.BackgroundTransparency=1; oTaDesc.Text="Orbits every player in server"; oTaDesc.TextSize=10; oTaDesc.Font=Enum.Font.Gotham
-        oTaDesc.TextColor3=T.sub; oTaDesc.TextXAlignment=Enum.TextXAlignment.Left; oTaDesc.Parent=taRow
-        local oTaPill=Instance.new("Frame"); oTaPill.Size=UDim2.new(0,40,0,22); oTaPill.Position=UDim2.new(1,-48,0.5,-11)
-        oTaPill.BackgroundColor3=state.targetAll and T.red or T.border; oTaPill.BorderSizePixel=0; oTaPill.Parent=taRow; corner(oTaPill,11)
-        local oTaPT=Instance.new("Frame"); oTaPT.Size=UDim2.new(0,15,0,15)
-        oTaPT.Position=state.targetAll and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-        oTaPT.BackgroundColor3=Color3.fromRGB(240,240,240); oTaPT.BorderSizePixel=0; oTaPT.Parent=oTaPill; corner(oTaPT,8)
-        local oTaClick=Instance.new("TextButton"); oTaClick.Size=UDim2.new(1,0,1,0); oTaClick.BackgroundTransparency=1; oTaClick.Text=""; oTaClick.Parent=taRow
-        oTaClick.MouseButton1Click:Connect(function()
-            state.targetAll=not state.targetAll; rebuildOrbitTargets()
-        end)
-        taRow.MouseEnter:Connect(function() tw(taRow,{BackgroundColor3=T.cardH}) end)
-        taRow.MouseLeave:Connect(function() tw(taRow,{BackgroundColor3=T.card}) end)
-
-        -- Per-player rows (filtered by search)
-        local idx = 0
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer then
-                local dn = p.DisplayName:lower()
-                local un = p.Name:lower()
-                if q == "" or dn:find(q, 1, true) or un:find(q, 1, true) then
-                    idx = idx + 1
-                    local active = orbitTargeted[p.Name] == true
-                    local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,54); row.LayoutOrder=idx+3
-                    row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=orbitTargetPage; corner(row,10)
-                    stroke(row,active and Color3.fromRGB(80,18,18) or T.border,active and 1.5 or 1); table.insert(orbitTargetRowsList,row)
-                    local avaCircle=Instance.new("Frame"); avaCircle.Size=UDim2.new(0,40,0,40); avaCircle.Position=UDim2.new(0,7,0.5,-20)
-                    avaCircle.BackgroundColor3=T.surface; avaCircle.BorderSizePixel=0; avaCircle.ClipsDescendants=true; avaCircle.Parent=row; corner(avaCircle,20)
-                    if active then stroke(avaCircle,T.red,2) end
-                    local avaImg=Instance.new("ImageLabel"); avaImg.Size=UDim2.new(1,0,1,0); avaImg.BackgroundTransparency=1; avaImg.Image=""; avaImg.Parent=avaCircle
-                    local uid=p.UserId; task.spawn(function()
-                        local ok,img=pcall(function() return Players:GetUserThumbnailAsync(uid,Enum.ThumbnailType.HeadShot,Enum.ThumbnailSize.Size48x48) end)
-                        if ok and img then avaImg.Image=img end
-                    end)
-                    local dispN=Instance.new("TextLabel"); dispN.Size=UDim2.new(1,-106,0,18); dispN.Position=UDim2.new(0,55,0,9)
-                    dispN.BackgroundTransparency=1; dispN.Text=p.DisplayName; dispN.TextSize=13; dispN.Font=Enum.Font.GothamBold
-                    dispN.TextColor3=active and T.text or T.sub; dispN.TextXAlignment=Enum.TextXAlignment.Left; dispN.TextTruncate=Enum.TextTruncate.AtEnd; dispN.Parent=row
-                    local userN=Instance.new("TextLabel"); userN.Size=UDim2.new(1,-106,0,13); userN.Position=UDim2.new(0,55,0,29)
-                    userN.BackgroundTransparency=1; userN.Text="@"..p.Name; userN.TextSize=10; userN.Font=Enum.Font.Gotham
-                    userN.TextColor3=T.sub; userN.TextXAlignment=Enum.TextXAlignment.Left; userN.TextTruncate=Enum.TextTruncate.AtEnd; userN.Parent=row
-                    local pPill=Instance.new("Frame"); pPill.Size=UDim2.new(0,40,0,22); pPill.Position=UDim2.new(1,-48,0.5,-11)
-                    pPill.BackgroundColor3=active and T.red or T.border; pPill.BorderSizePixel=0; pPill.Parent=row; corner(pPill,11)
-                    local pPT=Instance.new("Frame"); pPT.Size=UDim2.new(0,15,0,15)
-                    pPT.Position=active and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-                    pPT.BackgroundColor3=Color3.fromRGB(240,240,240); pPT.BorderSizePixel=0; pPT.Parent=pPill; corner(pPT,8)
-                    local clickable=Instance.new("TextButton"); clickable.Size=UDim2.new(1,0,1,0); clickable.BackgroundTransparency=1; clickable.Text=""; clickable.Parent=row
-                    local pName=p.Name
-                    clickable.MouseButton1Click:Connect(function()
-                        orbitTargeted[pName]=not orbitTargeted[pName]; rebuildOrbitTargets()
-                    end)
-                    row.MouseEnter:Connect(function() tw(row,{BackgroundColor3=T.cardH}) end)
-                    row.MouseLeave:Connect(function() tw(row,{BackgroundColor3=T.card}) end)
-                end
-            end
-        end
-
-        -- "No results" label
-        if idx == 0 and q ~= "" then
-            local noRes=Instance.new("TextLabel"); noRes.Size=UDim2.new(1,0,0,36); noRes.LayoutOrder=4
-            noRes.BackgroundTransparency=1; noRes.Text='No players match "'..orbitSearchQuery..'"'
-            noRes.TextSize=11; noRes.Font=Enum.Font.Gotham; noRes.TextColor3=T.sub
-            noRes.TextXAlignment=Enum.TextXAlignment.Center; noRes.Parent=orbitTargetPage
-            table.insert(orbitTargetRowsList, noRes)
-        end
-    end
-
-    -- Wire orbit search box now that rebuildOrbitTargets is defined
-    orbitSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-        orbitSearchQuery = orbitSearchBox.Text
-        rebuildOrbitTargets()
-    end)
-
-    Players.PlayerAdded:Connect(function() rebuildOrbitTargets() end)
-    Players.PlayerRemoving:Connect(function(p) orbitTargeted[p.Name]=nil; rebuildOrbitTargets() end)
-
-    LocalPlayer.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if state.orbitEnabled then startOrbit() end
-    end)
-
-    -- ════════════════════════════════════════════════════════════════════
-    --  FLY PAGE
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(flyPage,"FLY CONTROLS",0)
-
-    local flyInfoCard=Instance.new("Frame"); flyInfoCard.Size=UDim2.new(1,0,0,70); flyInfoCard.LayoutOrder=1
-    flyInfoCard.BackgroundColor3=T.blueD; flyInfoCard.BorderSizePixel=0; flyInfoCard.Parent=flyPage; corner(flyInfoCard,10)
-    local flyInfoLbl=Instance.new("TextLabel"); flyInfoLbl.Size=UDim2.new(1,-16,1,0); flyInfoLbl.Position=UDim2.new(0,12,0,0)
-    flyInfoLbl.BackgroundTransparency=1; flyInfoLbl.TextSize=10; flyInfoLbl.Font=Enum.Font.Gotham
-    flyInfoLbl.TextColor3=Color3.fromRGB(160,200,255); flyInfoLbl.TextXAlignment=Enum.TextXAlignment.Left
-    flyInfoLbl.TextWrapped=true
-    flyInfoLbl.Text="✈  WASD to move  ·  Space to rise  ·  LCtrl/LShift to descend\nStand still to hover in place"
-    flyInfoLbl.Parent=flyInfoCard
-
-    local _flyCard, _setFlyPill = makeToggleCard(
-        flyPage,"✈  Enable Fly","Fly freely through the map",
-        state.flyEnabled,2,T.blue,
-        function(v)
-            state.flyEnabled=v
-            if v then startFly() else stopFly() end
-            saveAll()
-        end
-    )
-
-    sectionLabel(flyPage,"SPEED & HEIGHT",3)
-    local _,_,setFlySpeed = makeSlider(flyPage,"FLY SPEED",1,150000,state.flySpeed,function(v) state.flySpeed=v; saveAll() end, T.blue)
-    local _,_,setFlyHeight= makeSlider(flyPage,"FLY BOOST",1,150000,state.flyHeight,function(v) state.flyHeight=v; saveAll() end, T.blue)
-
-    LocalPlayer.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if state.flyEnabled then startFly() end
-        if state.noclipEnabled then startNoclip() end
-    end)
-
-    -- ════════════════════════════════════════════════════════════════════
-    --  NOCLIP PAGE
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(noclipPage,"NOCLIP CONTROLS",0)
-
-    local noclipInfoCard=Instance.new("Frame"); noclipInfoCard.Size=UDim2.new(1,0,0,60); noclipInfoCard.LayoutOrder=1
-    noclipInfoCard.BackgroundColor3=T.purpleD; noclipInfoCard.BorderSizePixel=0; noclipInfoCard.Parent=noclipPage; corner(noclipInfoCard,10)
-    local noclipInfoLbl=Instance.new("TextLabel"); noclipInfoLbl.Size=UDim2.new(1,-16,1,0); noclipInfoLbl.Position=UDim2.new(0,12,0,0)
-    noclipInfoLbl.BackgroundTransparency=1; noclipInfoLbl.TextSize=10; noclipInfoLbl.Font=Enum.Font.Gotham
-    noclipInfoLbl.TextColor3=Color3.fromRGB(200,170,255); noclipInfoLbl.TextXAlignment=Enum.TextXAlignment.Left
-    noclipInfoLbl.TextWrapped=true
-    noclipInfoLbl.Text="👻  Walk/fly through walls and terrain.\nCombine with Fly tab for full ghost mode."
-    noclipInfoLbl.Parent=noclipInfoCard
-
-    local _noclipCard, _setNoclipPill = makeToggleCard(
-        noclipPage,"👻  Enable Noclip","Pass through all parts",
-        state.noclipEnabled,2,T.purple,
-        function(v)
-            state.noclipEnabled=v
-            if v then startNoclip() else stopNoclip() end
-            saveAll()
-        end
-    )
-
-    local comboBtn=Instance.new("TextButton"); comboBtn.Size=UDim2.new(1,0,0,38); comboBtn.LayoutOrder=3
-    comboBtn.BackgroundColor3=Color3.fromRGB(50,30,70); comboBtn.BorderSizePixel=0
-    comboBtn.Text="⚡  Ghost Mode  (Fly + Noclip)"; comboBtn.TextSize=12; comboBtn.Font=Enum.Font.GothamBold
-    comboBtn.TextColor3=T.purple; comboBtn.AutoButtonColor=false; comboBtn.Parent=noclipPage; corner(comboBtn,8)
-    stroke(comboBtn,T.purple,1)
-    comboBtn.MouseEnter:Connect(function() tw(comboBtn,{BackgroundColor3=Color3.fromRGB(65,40,90)}) end)
-    comboBtn.MouseLeave:Connect(function() tw(comboBtn,{BackgroundColor3=Color3.fromRGB(50,30,70)}) end)
-    comboBtn.MouseButton1Click:Connect(function()
-        state.flyEnabled=true; state.noclipEnabled=true
-        startFly(); startNoclip(); saveAll()
-        tw(comboBtn,{BackgroundColor3=T.purpleD}); task.delay(0.4,function() tw(comboBtn,{BackgroundColor3=Color3.fromRGB(50,30,70)}) end)
-    end)
-
-    local disableGhostBtn=Instance.new("TextButton"); disableGhostBtn.Size=UDim2.new(1,0,0,38); disableGhostBtn.LayoutOrder=4
-    disableGhostBtn.BackgroundColor3=Color3.fromRGB(60,20,20); disableGhostBtn.BorderSizePixel=0
-    disableGhostBtn.Text="✕  Disable Ghost Mode"; disableGhostBtn.TextSize=12; disableGhostBtn.Font=Enum.Font.GothamBold
-    disableGhostBtn.TextColor3=T.red; disableGhostBtn.AutoButtonColor=false; disableGhostBtn.Parent=noclipPage; corner(disableGhostBtn,8)
-    stroke(disableGhostBtn,T.red,1)
-    disableGhostBtn.MouseEnter:Connect(function() tw(disableGhostBtn,{BackgroundColor3=Color3.fromRGB(80,28,28)}) end)
-    disableGhostBtn.MouseLeave:Connect(function() tw(disableGhostBtn,{BackgroundColor3=Color3.fromRGB(60,20,20)}) end)
-    disableGhostBtn.MouseButton1Click:Connect(function()
-        state.flyEnabled=false; state.noclipEnabled=false
-        stopFly(); stopNoclip(); saveAll()
-        tw(disableGhostBtn,{BackgroundColor3=T.red})
-        task.delay(0.4,function() tw(disableGhostBtn,{BackgroundColor3=Color3.fromRGB(60,20,20)}) end)
-    end)
-
-    -- ════════════════════════════════════════════════════════════════════
-    --  ESP PAGE
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(espPage,"ESP OVERLAY",0)
-
-    local espMasterCard=Instance.new("Frame"); espMasterCard.Size=UDim2.new(1,0,0,44); espMasterCard.LayoutOrder=1
-    espMasterCard.BackgroundColor3=T.card; espMasterCard.BorderSizePixel=0; espMasterCard.Parent=espPage; corner(espMasterCard,8); stroke(espMasterCard,T.border)
-    local espMasterLbl=Instance.new("TextLabel"); espMasterLbl.Size=UDim2.new(1,-60,1,0); espMasterLbl.Position=UDim2.new(0,12,0,0)
-    espMasterLbl.BackgroundTransparency=1; espMasterLbl.Text="Enable ESP"; espMasterLbl.TextSize=13; espMasterLbl.Font=Enum.Font.GothamBold
-    espMasterLbl.TextColor3=T.text; espMasterLbl.TextXAlignment=Enum.TextXAlignment.Left; espMasterLbl.Parent=espMasterCard
-    local espMasterPill=Instance.new("Frame"); espMasterPill.Size=UDim2.new(0,40,0,22); espMasterPill.Position=UDim2.new(1,-52,0.5,-11)
-    espMasterPill.BackgroundColor3=state.espEnabled and T.accent or T.border; espMasterPill.BorderSizePixel=0; espMasterPill.Parent=espMasterCard; corner(espMasterPill,11)
-    local espMasterKnob=Instance.new("Frame"); espMasterKnob.Size=UDim2.new(0,15,0,15)
-    espMasterKnob.Position=state.espEnabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-    espMasterKnob.BackgroundColor3=Color3.fromRGB(240,240,240); espMasterKnob.BorderSizePixel=0; espMasterKnob.Parent=espMasterPill; corner(espMasterKnob,8)
-    local espMasterClick=Instance.new("TextButton"); espMasterClick.Size=UDim2.new(1,0,1,0); espMasterClick.BackgroundTransparency=1; espMasterClick.Text=""; espMasterClick.Parent=espMasterCard
-    espMasterClick.MouseButton1Click:Connect(function()
-        state.espEnabled=not state.espEnabled; local t=0.15
-        TweenService:Create(espMasterPill,TweenInfo.new(t),{BackgroundColor3=state.espEnabled and T.accent or T.border}):Play()
-        TweenService:Create(espMasterKnob,TweenInfo.new(t),{Position=state.espEnabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)}):Play()
-        refreshAllESP(); saveAll()
-    end)
-
-    sectionLabel(espPage,"COMPONENTS",2)
-    local ESP_OPTS={
-        {key="espBox",    label="Box Outline",  desc="SelectionBox around character"},
-        {key="espName",   label="Name Tag",     desc="Display name + @username"},
-        {key="espHealth", label="Health Bar",   desc="Green→red HP bar above tag"},
-        {key="espDist",   label="Distance",     desc="Stud distance label"},
-        {key="espTracer", label="Tracers",      desc="Line from screen-center to player"},
-    }
-    for idx,opt in ipairs(ESP_OPTS) do
-        local optCard=Instance.new("Frame"); optCard.Size=UDim2.new(1,0,0,44); optCard.LayoutOrder=idx+2
-        optCard.BackgroundColor3=T.card; optCard.BorderSizePixel=0; optCard.Parent=espPage; corner(optCard,8); stroke(optCard,T.border)
-        local optNameL=Instance.new("TextLabel"); optNameL.Size=UDim2.new(1,-60,0,18); optNameL.Position=UDim2.new(0,12,0,5)
-        optNameL.BackgroundTransparency=1; optNameL.Text=opt.label; optNameL.TextSize=12; optNameL.Font=Enum.Font.GothamBold
-        optNameL.TextColor3=T.text; optNameL.TextXAlignment=Enum.TextXAlignment.Left; optNameL.Parent=optCard
-        local optDescL=Instance.new("TextLabel"); optDescL.Size=UDim2.new(1,-60,0,13); optDescL.Position=UDim2.new(0,12,0,24)
-        optDescL.BackgroundTransparency=1; optDescL.Text=opt.desc; optDescL.TextSize=10; optDescL.Font=Enum.Font.Gotham
-        optDescL.TextColor3=T.sub; optDescL.TextXAlignment=Enum.TextXAlignment.Left; optDescL.Parent=optCard
-        local initVal=state[opt.key]
-        local _optPill,setOptPill=makePillToggle(optCard,initVal,function(v) state[opt.key]=v; refreshAllESP(); saveAll() end)
-        _optPill.Position=UDim2.new(1,-52,0.5,-11); _optPill.Parent=optCard
-        optCard.MouseEnter:Connect(function() tw(optCard,{BackgroundColor3=T.cardH}) end)
-        optCard.MouseLeave:Connect(function() tw(optCard,{BackgroundColor3=T.card}) end)
-    end
-
-    sectionLabel(espPage,"FOV VISUALIZER",8)
-
-    local fovMasterCard=Instance.new("Frame"); fovMasterCard.Size=UDim2.new(1,0,0,44); fovMasterCard.LayoutOrder=9
-    fovMasterCard.BackgroundColor3=T.card; fovMasterCard.BorderSizePixel=0; fovMasterCard.Parent=espPage; corner(fovMasterCard,8); stroke(fovMasterCard,T.border)
-    local fovMasterLbl=Instance.new("TextLabel"); fovMasterLbl.Size=UDim2.new(1,-60,1,0); fovMasterLbl.Position=UDim2.new(0,12,0,0)
-    fovMasterLbl.BackgroundTransparency=1; fovMasterLbl.Text="👁  Show FOV Circle"; fovMasterLbl.TextSize=13; fovMasterLbl.Font=Enum.Font.GothamBold
-    fovMasterLbl.TextColor3=T.text; fovMasterLbl.TextXAlignment=Enum.TextXAlignment.Left; fovMasterLbl.Parent=fovMasterCard
-    local fovSubLbl=Instance.new("TextLabel"); fovSubLbl.Size=UDim2.new(1,-60,0,12); fovSubLbl.Position=UDim2.new(0,12,0,28)
-    fovSubLbl.BackgroundTransparency=1; fovSubLbl.Text="Animated yellow ring on screen"; fovSubLbl.TextSize=9; fovSubLbl.Font=Enum.Font.Gotham
-    fovSubLbl.TextColor3=T.sub; fovSubLbl.TextXAlignment=Enum.TextXAlignment.Left; fovSubLbl.Parent=fovMasterCard
-    local fovMasterPill=Instance.new("Frame"); fovMasterPill.Size=UDim2.new(0,40,0,22); fovMasterPill.Position=UDim2.new(1,-52,0.5,-11)
-    fovMasterPill.BackgroundColor3=state.fovEnabled and T.yellow or T.border; fovMasterPill.BorderSizePixel=0; fovMasterPill.Parent=fovMasterCard; corner(fovMasterPill,11)
-    local fovMasterKnob=Instance.new("Frame"); fovMasterKnob.Size=UDim2.new(0,15,0,15)
-    fovMasterKnob.Position=state.fovEnabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)
-    fovMasterKnob.BackgroundColor3=Color3.fromRGB(240,240,240); fovMasterKnob.BorderSizePixel=0; fovMasterKnob.Parent=fovMasterPill; corner(fovMasterKnob,8)
-    local fovMasterClick=Instance.new("TextButton"); fovMasterClick.Size=UDim2.new(1,0,1,0); fovMasterClick.BackgroundTransparency=1; fovMasterClick.Text=""; fovMasterClick.Parent=fovMasterCard
-    fovMasterClick.MouseButton1Click:Connect(function()
-        state.fovEnabled=not state.fovEnabled; local t=0.15
-        TweenService:Create(fovMasterPill,TweenInfo.new(t),{BackgroundColor3=state.fovEnabled and T.yellow or T.border}):Play()
-        TweenService:Create(fovMasterKnob,TweenInfo.new(t),{Position=state.fovEnabled and UDim2.new(1,-18,0.5,-7.5) or UDim2.new(0,3,0.5,-7.5)}):Play()
-        if state.fovEnabled then buildFOVGui(gui) else destroyFOVGui() end
-        saveAll()
-    end)
-
-    local _,_,setFovRange = makeSlider(espPage,"FOV RANGE (°)",5,150000,state.fovRange,function(v)
-        state.fovRange=v; saveAll()
-    end, T.yellow)
-
-    sectionLabel(espPage,"ESP COLOR",11)
-    local COLOR_SWATCHES={
-        {r=122,g=186,b=136,name="Green"},{r=80,g=148,b=228,name="Blue"},
-        {r=218,g=130,b=52,name="Orange"},{r=218,g=82,b=82,name="Red"},
-        {r=200,g=200,b=200,name="White"},{r=186,g=122,b=218,name="Purple"},
-    }
-    local colorRow=Instance.new("Frame"); colorRow.Size=UDim2.new(1,0,0,36); colorRow.LayoutOrder=12
-    colorRow.BackgroundTransparency=1; colorRow.Parent=espPage; listLayout(colorRow,6,Enum.FillDirection.Horizontal)
-    local selectedSwatch=nil
-    for _,sw in ipairs(COLOR_SWATCHES) do
-        local swBtn=Instance.new("TextButton"); swBtn.Size=UDim2.new(1/#COLOR_SWATCHES,-5,1,0)
-        swBtn.BackgroundColor3=Color3.fromRGB(sw.r,sw.g,sw.b); swBtn.BorderSizePixel=0; swBtn.Text=""
-        swBtn.AutoButtonColor=false; swBtn.Parent=colorRow; corner(swBtn,6)
-        local isActive=(sw.r==state.espR and sw.g==state.espG and sw.b==state.espB)
-        if isActive then stroke(swBtn,Color3.fromRGB(255,255,255),2); selectedSwatch=swBtn end
-        swBtn.MouseButton1Click:Connect(function()
-            state.espR,state.espG,state.espB=sw.r,sw.g,sw.b
-            if selectedSwatch then local s=selectedSwatch:FindFirstChildOfClass("UIStroke"); if s then s:Destroy() end end
-            stroke(swBtn,Color3.fromRGB(255,255,255),2); selectedSwatch=swBtn; refreshAllESP(); saveAll()
-        end)
-    end
-
-    -- ════════════════════════════════════════════════════════════════════
-    --  AIMBOT PAGE
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(aimbotPage,"AIMBOT",0)
-
-    -- Banner
-    local abBanner=Instance.new("Frame"); abBanner.Size=UDim2.new(1,0,0,46); abBanner.LayoutOrder=1
-    abBanner.BackgroundColor3=Color3.fromRGB(14,22,36); abBanner.BorderSizePixel=0; abBanner.Parent=aimbotPage; corner(abBanner,10)
-    local abStroke=Instance.new("UIStroke"); abStroke.Color=T.blue; abStroke.Thickness=1.5; abStroke.Parent=abBanner
-    local abDot=Instance.new("Frame"); abDot.Size=UDim2.new(0,8,0,8); abDot.Position=UDim2.new(0,12,0.5,-4)
-    abDot.BackgroundColor3=T.blue; abDot.BorderSizePixel=0; abDot.Parent=abBanner; corner(abDot,4)
-    local abBannerLbl=Instance.new("TextLabel"); abBannerLbl.Size=UDim2.new(1,-60,1,0); abBannerLbl.Position=UDim2.new(0,28,0,0)
-    abBannerLbl.BackgroundTransparency=1; abBannerLbl.Text="AIMBOT  ·  Hold RMB to lock-on"
-    abBannerLbl.TextSize=11; abBannerLbl.Font=Enum.Font.GothamBold; abBannerLbl.TextColor3=T.blue
-    abBannerLbl.TextXAlignment=Enum.TextXAlignment.Left; abBannerLbl.Parent=abBanner
-
-    -- Enable toggle
-    local _abCard, _setAbPill = makeToggleCard(
-        aimbotPage,"🎯  Enable Aimbot","Smooth camera lock-on to nearest player",
-        state.aimbotEnabled, 2, T.blue,
-        function(v)
-            state.aimbotEnabled = v
-            if v then startAimbot() else stopAimbot() end
-            saveAll()
-        end
-    )
-
-    -- Hold RMB toggle
-    local _abRMBCard, _setAbRMBPill = makeToggleCard(
-        aimbotPage,"🖱  Hold RMB to Activate","Only aim when Right Mouse Button is held",
-        state.aimbotHoldRMB, 3, T.blue,
-        function(v) state.aimbotHoldRMB = v; saveAll() end
-    )
-
-    sectionLabel(aimbotPage,"SETTINGS",4)
-
-    local _,_,setAbFOV = makeSlider(aimbotPage,"FOV  (px)",10,800,state.aimbotFOV,
-        function(v) state.aimbotFOV=v; saveAll() end, T.blue)
-
-    local _,_,setAbSmooth = makeSlider(aimbotPage,"SMOOTHNESS",1,50,state.aimbotSmooth,
-        function(v) state.aimbotSmooth=v; saveAll() end, T.blue)
-
-    sectionLabel(aimbotPage,"TARGET BONE",5)
-
-    -- Bone cycle card
-    local abBoneOptions = {"Head","UpperTorso","HumanoidRootPart","Torso","LowerTorso"}
-    local abBoneCard=Instance.new("Frame"); abBoneCard.Size=UDim2.new(1,0,0,44); abBoneCard.LayoutOrder=6
-    abBoneCard.BackgroundColor3=T.card; abBoneCard.BorderSizePixel=0; abBoneCard.Parent=aimbotPage; corner(abBoneCard,10)
-    local abStrokeC=Instance.new("UIStroke"); abStrokeC.Color=T.border; abStrokeC.Thickness=1; abStrokeC.Parent=abBoneCard
-    local abBoneLbl=Instance.new("TextLabel"); abBoneLbl.Size=UDim2.new(1,-110,1,0); abBoneLbl.Position=UDim2.new(0,12,0,0)
-    abBoneLbl.BackgroundTransparency=1; abBoneLbl.Text="Aim Bone"; abBoneLbl.TextSize=12; abBoneLbl.Font=Enum.Font.Gotham
-    abBoneLbl.TextColor3=T.text; abBoneLbl.TextXAlignment=Enum.TextXAlignment.Left; abBoneLbl.Parent=abBoneCard
-    local abBoneBtn=Instance.new("TextButton"); abBoneBtn.Size=UDim2.new(0,110,0,28); abBoneBtn.Position=UDim2.new(1,-118,0.5,-14)
-    abBoneBtn.BackgroundColor3=T.surface; abBoneBtn.BorderSizePixel=0; abBoneBtn.Text=state.aimbotBone
-    abBoneBtn.TextSize=11; abBoneBtn.Font=Enum.Font.GothamBold; abBoneBtn.TextColor3=T.blue
-    abBoneBtn.AutoButtonColor=false; abBoneBtn.Parent=abBoneCard; corner(abBoneBtn,6)
-    local abBoneSt=Instance.new("UIStroke"); abBoneSt.Color=T.blueD; abBoneSt.Thickness=1; abBoneSt.Parent=abBoneBtn
-    abBoneBtn.MouseButton1Click:Connect(function()
-        local cur=state.aimbotBone; local idx=1
-        for i,v in ipairs(abBoneOptions) do if v==cur then idx=i; break end end
-        idx=(idx % #abBoneOptions)+1; state.aimbotBone=abBoneOptions[idx]; abBoneBtn.Text=abBoneOptions[idx]; saveAll()
-    end)
-    abBoneCard.MouseEnter:Connect(function() tw(abBoneCard,{BackgroundColor3=T.cardH}) end)
-    abBoneCard.MouseLeave:Connect(function() tw(abBoneCard,{BackgroundColor3=T.card}) end)
-
-    -- ════════════════════════════════════════════════════════════════════
-    --  SILENT AIM PAGE
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(triggerPage,"TRIGGERBOT",0)
-
-    -- Banner
-    local tbBanner=Instance.new("Frame"); tbBanner.Size=UDim2.new(1,0,0,46); tbBanner.LayoutOrder=1
-    tbBanner.BackgroundColor3=Color3.fromRGB(28,18,8); tbBanner.BorderSizePixel=0; tbBanner.Parent=triggerPage; corner(tbBanner,10)
-    local tbBannerSt=Instance.new("UIStroke"); tbBannerSt.Color=T.orange; tbBannerSt.Thickness=1.5; tbBannerSt.Parent=tbBanner
-    local tbDot=Instance.new("Frame"); tbDot.Size=UDim2.new(0,8,0,8); tbDot.Position=UDim2.new(0,12,0.5,-4)
-    tbDot.BackgroundColor3=T.orange; tbDot.BorderSizePixel=0; tbDot.Parent=tbBanner; corner(tbDot,4)
-    local tbBannerLbl=Instance.new("TextLabel"); tbBannerLbl.Size=UDim2.new(1,-60,1,0); tbBannerLbl.Position=UDim2.new(0,28,0,0)
-    tbBannerLbl.BackgroundTransparency=1; tbBannerLbl.Text="TRIGGERBOT  ·  Auto-fire on crosshair overlap"
-    tbBannerLbl.TextSize=11; tbBannerLbl.Font=Enum.Font.GothamBold; tbBannerLbl.TextColor3=T.orange
-    tbBannerLbl.TextXAlignment=Enum.TextXAlignment.Left; tbBannerLbl.Parent=tbBanner
-
-    -- Info card
-    local tbInfo=Instance.new("Frame"); tbInfo.Size=UDim2.new(1,0,0,60); tbInfo.LayoutOrder=2
-    tbInfo.BackgroundColor3=Color3.fromRGB(28,18,8); tbInfo.BorderSizePixel=0; tbInfo.Parent=triggerPage; corner(tbInfo,10)
-    local tbInfoSt=Instance.new("UIStroke"); tbInfoSt.Color=Color3.fromRGB(80,40,10); tbInfoSt.Thickness=1; tbInfoSt.Parent=tbInfo
-    local tbInfoLbl=Instance.new("TextLabel"); tbInfoLbl.Size=UDim2.new(1,-20,1,0); tbInfoLbl.Position=UDim2.new(0,10,0,0)
-    tbInfoLbl.BackgroundTransparency=1; tbInfoLbl.TextSize=10; tbInfoLbl.Font=Enum.Font.Gotham
-    tbInfoLbl.TextColor3=T.orange; tbInfoLbl.TextXAlignment=Enum.TextXAlignment.Left; tbInfoLbl.TextWrapped=true
-    tbInfoLbl.Text="Raycasts from your crosshair every frame. If the ray hits a player within the FOV radius, it auto-fires after the set delay."
-    tbInfoLbl.Parent=tbInfo
-
-    -- Enable toggle
-    local _tbCard, _setTbPill = makeToggleCard(
-        triggerPage,"🔫  Enable Triggerbot","Auto-fires when crosshair overlaps a player",
-        state.triggerEnabled, 3, T.orange,
-        function(v)
-            state.triggerEnabled = v
-            if v then startTriggerbot() else stopTriggerbot() end
-            saveAll()
-        end
-    )
-
-    sectionLabel(triggerPage,"SETTINGS",4)
-
-    makeSlider(triggerPage,"FIRE DELAY  (ms)",0,500,state.triggerDelay,
-        function(v) state.triggerDelay=v; saveAll() end, T.orange)
-
-    makeSlider(triggerPage,"FOV RADIUS  (px)",1,400,state.triggerFOV,
-        function(v) state.triggerFOV=v; saveAll() end, T.orange)
-
-        -- ════════════════════════════════════════════════════════════════════
-    --  RAGEBOT PAGE
-    -- ════════════════════════════════════════════════════════════════════
-    sectionLabel(ragebotPage,"RAGEBOT",0)
-
-    -- Crimson banner
-    local rbBanner=Instance.new("Frame"); rbBanner.Size=UDim2.new(1,0,0,46); rbBanner.LayoutOrder=1
-    rbBanner.BackgroundColor3=T.rageD; rbBanner.BorderSizePixel=0; rbBanner.Parent=ragebotPage; corner(rbBanner,10)
-    local rbBannerSt=Instance.new("UIStroke"); rbBannerSt.Color=T.rage; rbBannerSt.Thickness=1.5; rbBannerSt.Parent=rbBanner
-    local rbDot=Instance.new("Frame"); rbDot.Size=UDim2.new(0,8,0,8); rbDot.Position=UDim2.new(0,12,0.5,-4)
-    rbDot.BackgroundColor3=T.rage; rbDot.BorderSizePixel=0; rbDot.Parent=rbBanner; corner(rbDot,4)
-    local rbBannerLbl=Instance.new("TextLabel"); rbBannerLbl.Size=UDim2.new(1,-60,1,0); rbBannerLbl.Position=UDim2.new(0,28,0,0)
-    rbBannerLbl.BackgroundTransparency=1; rbBannerLbl.Text="RAGEBOT  ·  Instant snap + auto-fire"
-    rbBannerLbl.TextSize=11; rbBannerLbl.Font=Enum.Font.GothamBold; rbBannerLbl.TextColor3=T.rage
-    rbBannerLbl.TextXAlignment=Enum.TextXAlignment.Left; rbBannerLbl.Parent=rbBanner
-
-    -- Warning
-    local rbWarn=Instance.new("Frame"); rbWarn.Size=UDim2.new(1,0,0,44); rbWarn.LayoutOrder=2
-    rbWarn.BackgroundColor3=Color3.fromRGB(38,10,10); rbWarn.BorderSizePixel=0; rbWarn.Parent=ragebotPage; corner(rbWarn,10)
-    local rbWarnSt=Instance.new("UIStroke"); rbWarnSt.Color=T.rageD; rbWarnSt.Thickness=1; rbWarnSt.Parent=rbWarn
-    local rbWarnLbl=Instance.new("TextLabel"); rbWarnLbl.Size=UDim2.new(1,-20,1,0); rbWarnLbl.Position=UDim2.new(0,10,0,0)
-    rbWarnLbl.BackgroundTransparency=1; rbWarnLbl.TextSize=10; rbWarnLbl.Font=Enum.Font.Gotham
-    rbWarnLbl.TextColor3=T.rage; rbWarnLbl.TextXAlignment=Enum.TextXAlignment.Left; rbWarnLbl.TextWrapped=true
-    rbWarnLbl.Text="⚠  Instant snap + auto-fire is highly detectable. Use at your own risk."
-    rbWarnLbl.Parent=rbWarn
-
-    -- Enable toggle
-    local _rbCard, _setRbPill = makeToggleCard(
-        ragebotPage,"💀  Enable Ragebot","Instant snap-to-target + automatic fire",
-        state.ragebotEnabled, 3, T.rage,
-        function(v)
-            state.ragebotEnabled = v
-            if v then startRagebot() else stopRagebot() end
-            saveAll()
-        end
-    )
-
-    -- ── Targeting ───────────────────────────────────────────────────────
-    local function rageSection(parent, text, order)
-        local f=Instance.new("Frame"); f.Size=UDim2.new(1,0,0,22); f.LayoutOrder=order
-        f.BackgroundColor3=Color3.fromRGB(28,6,6); f.BorderSizePixel=0; f.Parent=parent; corner(f,6)
-        local fSt=Instance.new("UIStroke"); fSt.Color=T.rageD; fSt.Thickness=1; fSt.Parent=f
-        local l=Instance.new("TextLabel"); l.Size=UDim2.new(1,-16,1,0); l.Position=UDim2.new(0,10,0,0)
-        l.BackgroundTransparency=1; l.Text="▸  "..text; l.TextSize=10; l.Font=Enum.Font.GothamBold
-        l.TextColor3=T.rage; l.TextXAlignment=Enum.TextXAlignment.Left; l.Parent=f
-    end
-
-    local function makeCycleCard(parent, labelText, options, getVal, setVal, accentCol, order)
-        local ac = accentCol or T.accent
-        local card=Instance.new("Frame"); card.Size=UDim2.new(1,0,0,44); card.LayoutOrder=order or 0
-        card.BackgroundColor3=T.card; card.BorderSizePixel=0; card.Parent=parent; corner(card,10)
-        local cSt=Instance.new("UIStroke"); cSt.Color=T.border; cSt.Thickness=1; cSt.Parent=card
-        local lbl=Instance.new("TextLabel"); lbl.Size=UDim2.new(1,-120,1,0); lbl.Position=UDim2.new(0,12,0,0)
-        lbl.BackgroundTransparency=1; lbl.Text=labelText; lbl.TextSize=12; lbl.Font=Enum.Font.Gotham
-        lbl.TextColor3=T.text; lbl.TextXAlignment=Enum.TextXAlignment.Left; lbl.Parent=card
-        local vBtn=Instance.new("TextButton"); vBtn.Size=UDim2.new(0,110,0,28); vBtn.Position=UDim2.new(1,-118,0.5,-14)
-        vBtn.BackgroundColor3=T.surface; vBtn.BorderSizePixel=0; vBtn.Text=tostring(getVal())
-        vBtn.TextSize=11; vBtn.Font=Enum.Font.GothamBold; vBtn.TextColor3=ac
-        vBtn.AutoButtonColor=false; vBtn.Parent=card; corner(vBtn,6)
-        local vBtnSt=Instance.new("UIStroke"); vBtnSt.Color=Color3.fromRGB(math.floor(ac.R*255*0.5),math.floor(ac.G*255*0.5),math.floor(ac.B*255*0.5)); vBtnSt.Thickness=1; vBtnSt.Parent=vBtn
-        vBtn.MouseButton1Click:Connect(function()
-            local cur=getVal(); local idx=1
-            for i,v in ipairs(options) do if v==cur then idx=i; break end end
-            idx=(idx % #options)+1; setVal(options[idx]); vBtn.Text=options[idx]; saveAll()
-        end)
-        card.MouseEnter:Connect(function() tw(card,{BackgroundColor3=T.cardH}) end)
-        card.MouseLeave:Connect(function() tw(card,{BackgroundColor3=T.card}) end)
-        return card
-    end
-
-    rageSection(ragebotPage,"TARGETING",4)
-
-    makeCycleCard(ragebotPage,"Target Priority",
-        {"Closest","Lowest HP","Highest HP","Nearest Dist","Random"},
-        function() return state.ragebotTargetMode end,
-        function(v) state.ragebotTargetMode=v end,
-        T.rage, 5)
-
-    makeCycleCard(ragebotPage,"Hit Bone",
-        {"Head","UpperTorso","HumanoidRootPart","Torso","LowerTorso"},
-        function() return state.ragebotBone end,
-        function(v) state.ragebotBone=v end,
-        T.rage, 6)
-
-    rageSection(ragebotPage,"ACCURACY",7)
-
-    makeSlider(ragebotPage,"HITCHANCE  (%)",1,100,state.ragebotHitchance,
-        function(v) state.ragebotHitchance=v; saveAll() end, T.rage)
-
-    makeSlider(ragebotPage,"FIRE DELAY  (ms)",0,500,state.ragebotDelay,
-        function(v) state.ragebotDelay=v; saveAll() end, T.rage)
-
-    rageSection(ragebotPage,"EXPLOITS",8)
-
-    -- Doubleshot toggle
-    local _rbDsCard, _setRbDsPill = makeToggleCard(
-        ragebotPage,"⚡  Double Shot","Fire twice per trigger cycle (0.05 s gap)",
-        state.ragebotDoubleshot, 9, T.rage,
-        function(v) state.ragebotDoubleshot=v; saveAll() end
-    )
-
-    -- Velocity prediction toggle
-    local _rbPredCard, _setRbPredPill = makeToggleCard(
-        ragebotPage,"🔮  Velocity Prediction","Lead target using HRP AssemblyLinearVelocity",
-        state.ragebotPrediction, 10, T.rage,
-        function(v) state.ragebotPrediction=v; saveAll() end
-    )
-
-    -- Prediction info card
-    local rbPredInfo=Instance.new("Frame"); rbPredInfo.Size=UDim2.new(1,0,0,56); rbPredInfo.LayoutOrder=11
-    rbPredInfo.BackgroundColor3=Color3.fromRGB(28,8,8); rbPredInfo.BorderSizePixel=0; rbPredInfo.Parent=ragebotPage; corner(rbPredInfo,10)
-    local rbPredSt=Instance.new("UIStroke"); rbPredSt.Color=T.rageD; rbPredSt.Thickness=1; rbPredSt.Parent=rbPredInfo
-    local rbPredLbl=Instance.new("TextLabel"); rbPredLbl.Size=UDim2.new(1,-20,1,0); rbPredLbl.Position=UDim2.new(0,10,0,0)
-    rbPredLbl.BackgroundTransparency=1; rbPredLbl.TextSize=10; rbPredLbl.Font=Enum.Font.Gotham
-    rbPredLbl.TextColor3=T.sub; rbPredLbl.TextXAlignment=Enum.TextXAlignment.Left; rbPredLbl.TextWrapped=true
-    rbPredLbl.Text="Adds the target's velocity × estimated bullet travel time to the aim position. Assumes ~300 stud/s bullet speed."
-    rbPredLbl.Parent=rbPredInfo
+    Players.PlayerRemoving:Connect(function(p) targeted[p.Name] = nil; rebuildTargets() end)
 
     -- ════════════════════════════════════════════════════════════════════
     --  SETTINGS PAGE
     -- ════════════════════════════════════════════════════════════════════
     sectionLabel(settingsPage,"KEYBINDS",0)
 
-    local function makeKeybindCard(parent,descText,getKey,setKey,getBusy,setBusy,order)
-        local kbCard=Instance.new("Frame"); kbCard.Size=UDim2.new(1,0,0,44); kbCard.LayoutOrder=order or 0
-        kbCard.BackgroundColor3=T.card; kbCard.BorderSizePixel=0; kbCard.Parent=parent; corner(kbCard,8); stroke(kbCard,T.border)
-        local kbDesc=Instance.new("TextLabel"); kbDesc.Size=UDim2.new(1,-110,1,0); kbDesc.Position=UDim2.new(0,12,0,0)
-        kbDesc.BackgroundTransparency=1; kbDesc.Text=descText; kbDesc.TextSize=12; kbDesc.Font=Enum.Font.Gotham; kbDesc.TextColor3=T.text
-        kbDesc.TextXAlignment=Enum.TextXAlignment.Left; kbDesc.Parent=kbCard
-        local kbBtn=Instance.new("TextButton"); kbBtn.Size=UDim2.new(0,90,0,28); kbBtn.Position=UDim2.new(1,-98,0.5,-14)
-        kbBtn.BackgroundColor3=T.surface; kbBtn.BorderSizePixel=0; kbBtn.Text=getKey().Name; kbBtn.TextSize=11; kbBtn.Font=Enum.Font.GothamBold
-        kbBtn.TextColor3=T.accent; kbBtn.AutoButtonColor=false; kbBtn.Parent=kbCard; corner(kbBtn,6); stroke(kbBtn,T.accentD)
-        kbBtn.MouseEnter:Connect(function() if not getBusy() then tw(kbBtn,{BackgroundColor3=T.card}) end end)
-        kbBtn.MouseLeave:Connect(function() if not getBusy() then tw(kbBtn,{BackgroundColor3=T.surface}) end end)
+    local function makeKeybindCard(parent, descText, getKey, setKey, lo)
+        local kbCard = Instance.new("Frame"); kbCard.Size = UDim2.new(1,0,0,44); kbCard.LayoutOrder = lo or 0
+        kbCard.BackgroundColor3 = T.card; kbCard.BorderSizePixel = 0; kbCard.Parent = parent; corner(kbCard,8); stroke(kbCard,T.border)
+        local kbDesc = Instance.new("TextLabel"); kbDesc.Size = UDim2.new(1,-110,1,0); kbDesc.Position = UDim2.new(0,12,0,0)
+        kbDesc.BackgroundTransparency = 1; kbDesc.Text = descText; kbDesc.TextSize = 12; kbDesc.Font = Enum.Font.Gotham; kbDesc.TextColor3 = T.text
+        kbDesc.TextXAlignment = Enum.TextXAlignment.Left; kbDesc.Parent = kbCard
+        local kbBtn = Instance.new("TextButton"); kbBtn.Size = UDim2.new(0,90,0,28); kbBtn.Position = UDim2.new(1,-98,0.5,-14)
+        kbBtn.BackgroundColor3 = T.surface; kbBtn.BorderSizePixel = 0; kbBtn.Text = getKey().Name; kbBtn.TextSize = 11; kbBtn.Font = Enum.Font.GothamBold
+        kbBtn.TextColor3 = T.accent; kbBtn.AutoButtonColor = false; kbBtn.Parent = kbCard; corner(kbBtn,6); stroke(kbBtn,T.accentD)
+        local listening = false
         kbBtn.MouseButton1Click:Connect(function()
-            if getBusy() then return end; setBusy(true); kbBtn.Text="..."; kbBtn.TextColor3=T.yellow
-            local conn; conn=UserInputService.InputBegan:Connect(function(inp,gp)
+            if listening then return end; listening = true; kbBtn.Text = "..."; kbBtn.TextColor3 = T.yellow
+            local conn; conn = UserInputService.InputBegan:Connect(function(inp,gp)
                 if gp then return end
-                if inp.UserInputType==Enum.UserInputType.Keyboard then
-                    setKey(inp.KeyCode); kbBtn.Text=inp.KeyCode.Name; kbBtn.TextColor3=T.accent
-                    tw(kbBtn,{BackgroundColor3=T.surface}); setBusy(false); conn:Disconnect(); saveAll()
+                if inp.UserInputType == Enum.UserInputType.Keyboard then
+                    setKey(inp.KeyCode); kbBtn.Text = inp.KeyCode.Name; kbBtn.TextColor3 = T.accent
+                    tw(kbBtn,{BackgroundColor3=T.surface}); listening = false; conn:Disconnect(); saveAll()
                 end
             end)
         end)
+        kbBtn.MouseEnter:Connect(function() if not listening then tw(kbBtn,{BackgroundColor3=T.card}) end end)
+        kbBtn.MouseLeave:Connect(function() if not listening then tw(kbBtn,{BackgroundColor3=T.surface}) end end)
     end
 
-    local spoofBusy,guiBusy=false,false
+    local spoofBusy, guiBusy = false, false
     makeKeybindCard(settingsPage,"Toggle Spoof On/Off",
-        function() return state.spoofKey end,function(k) state.spoofKey=k end,
-        function() return spoofBusy end,function(v) spoofBusy=v end,1)
+        function() return state.spoofKey end, function(k) state.spoofKey=k end, 1)
     makeKeybindCard(settingsPage,"Open / Close Menu",
-        function() return state.guiKey end,function(k) state.guiKey=k end,
-        function() return guiBusy end,function(v) guiBusy=v end,2)
+        function() return state.guiKey end, function(k) state.guiKey=k end, 2)
 
-    UserInputService.InputBegan:Connect(function(inp,gp)
-        if gp or spoofBusy or guiBusy then return end
-        if inp.UserInputType~=Enum.UserInputType.Keyboard then return end
-        if inp.KeyCode==state.spoofKey then
-            state.enabled=not state.enabled; if state.enabled then startSpoof() end; updateStatus()
-        elseif inp.KeyCode==state.guiKey then
-            setGuiVisible(not guiVisible)
-        end
+    -- FOV visualizer toggle
+    sectionLabel(settingsPage,"FOV VISUALIZER",3)
+    local fovCard = Instance.new("Frame"); fovCard.Size = UDim2.new(1,0,0,44); fovCard.LayoutOrder = 4
+    fovCard.BackgroundColor3 = T.card; fovCard.BorderSizePixel = 0; fovCard.Parent = settingsPage; corner(fovCard,8); stroke(fovCard,T.border)
+    local fovLbl = Instance.new("TextLabel"); fovLbl.Size = UDim2.new(1,-60,1,0); fovLbl.Position = UDim2.new(0,12,0,0)
+    fovLbl.BackgroundTransparency = 1; fovLbl.Text = "Show FOV Circle"; fovLbl.TextSize = 13; fovLbl.Font = Enum.Font.GothamBold
+    fovLbl.TextColor3 = T.text; fovLbl.TextXAlignment = Enum.TextXAlignment.Left; fovLbl.Parent = fovCard
+    local _fovPill, setFovPill = makePillToggle(fovCard, state.fovEnabled, function(v)
+        state.fovEnabled = v
+        if v then buildFOVGui(gui) else destroyFOVGui() end; saveAll()
     end)
+    _fovPill.Position = UDim2.new(1,-52,0.5,-11); _fovPill.Parent = fovCard
+    makeSlider(settingsPage,"FOV RANGE",5,180,state.fovRange,function(v) state.fovRange=v; saveAll() end, T.yellow)
 
-    sectionLabel(settingsPage,"FILE",3)
-    local fileCard=Instance.new("Frame"); fileCard.Size=UDim2.new(1,0,0,44); fileCard.LayoutOrder=4
-    fileCard.BackgroundColor3=T.card; fileCard.BorderSizePixel=0; fileCard.Parent=settingsPage; corner(fileCard,8); stroke(fileCard,T.border)
-    local fileTitle_=Instance.new("TextLabel"); fileTitle_.Size=UDim2.new(1,-20,0,20); fileTitle_.Position=UDim2.new(0,12,0,6)
-    fileTitle_.BackgroundTransparency=1; fileTitle_.Text="Preset + Settings Storage"; fileTitle_.TextSize=12; fileTitle_.Font=Enum.Font.GothamBold
-    fileTitle_.TextColor3=T.text; fileTitle_.TextXAlignment=Enum.TextXAlignment.Left; fileTitle_.Parent=fileCard
-    local fileSub_=Instance.new("TextLabel"); fileSub_.Size=UDim2.new(1,-20,0,14); fileSub_.Position=UDim2.new(0,12,0,26)
-    fileSub_.BackgroundTransparency=1
-    fileSub_.Text=(writefile and isfile) and "● Saving to FakePosPresets.json" or "● writefile unavailable — session only"
-    fileSub_.TextSize=10; fileSub_.Font=Enum.Font.Gotham
-    fileSub_.TextColor3=(writefile and isfile) and T.accent or T.red
-    fileSub_.TextXAlignment=Enum.TextXAlignment.Left; fileSub_.Parent=fileCard
+    -- File info
+    sectionLabel(settingsPage,"FILE",6)
+    local fileCard = Instance.new("Frame"); fileCard.Size = UDim2.new(1,0,0,44); fileCard.LayoutOrder = 7
+    fileCard.BackgroundColor3 = T.card; fileCard.BorderSizePixel = 0; fileCard.Parent = settingsPage; corner(fileCard,8); stroke(fileCard,T.border)
+    local fTitle = Instance.new("TextLabel"); fTitle.Size = UDim2.new(1,-20,0,20); fTitle.Position = UDim2.new(0,12,0,6)
+    fTitle.BackgroundTransparency = 1; fTitle.Text = "Preset + Settings Storage"; fTitle.TextSize = 12; fTitle.Font = Enum.Font.GothamBold
+    fTitle.TextColor3 = T.text; fTitle.TextXAlignment = Enum.TextXAlignment.Left; fTitle.Parent = fileCard
+    local fSub = Instance.new("TextLabel"); fSub.Size = UDim2.new(1,-20,0,14); fSub.Position = UDim2.new(0,12,0,26)
+    fSub.BackgroundTransparency = 1
+    fSub.Text = (writefile and isfile) and "● Saving to "..SAVE_FILE or "● writefile unavailable — session only"
+    fSub.TextSize = 10; fSub.Font = Enum.Font.Gotham; fSub.TextXAlignment = Enum.TextXAlignment.Left
+    fSub.TextColor3 = (writefile and isfile) and T.accent or T.red; fSub.Parent = fileCard
 
-    sectionLabel(settingsPage,"DANGER ZONE",5)
-    local unloadBtn=Instance.new("TextButton"); unloadBtn.Size=UDim2.new(1,0,0,40); unloadBtn.LayoutOrder=6
-    unloadBtn.BackgroundColor3=Color3.fromRGB(50,14,14); unloadBtn.BorderSizePixel=0
-    unloadBtn.Text="⏏  Unload UI  (destroys everything)"; unloadBtn.TextSize=12; unloadBtn.Font=Enum.Font.GothamBold
-    unloadBtn.TextColor3=T.red; unloadBtn.AutoButtonColor=false; unloadBtn.Parent=settingsPage; corner(unloadBtn,8)
-    stroke(unloadBtn,T.red,1)
+    -- Unload
+    sectionLabel(settingsPage,"DANGER ZONE",8)
+    local unloadBtn = Instance.new("TextButton"); unloadBtn.Size = UDim2.new(1,0,0,40); unloadBtn.LayoutOrder = 9
+    unloadBtn.BackgroundColor3 = Color3.fromRGB(50,14,14); unloadBtn.BorderSizePixel = 0
+    unloadBtn.Text = "⏏  Unload UI  (destroys everything)"; unloadBtn.TextSize = 12; unloadBtn.Font = Enum.Font.GothamBold
+    unloadBtn.TextColor3 = T.red; unloadBtn.AutoButtonColor = false; unloadBtn.Parent = settingsPage; corner(unloadBtn,8); stroke(unloadBtn,T.red,1)
     unloadBtn.MouseEnter:Connect(function() tw(unloadBtn,{BackgroundColor3=Color3.fromRGB(72,18,18)}) end)
     unloadBtn.MouseLeave:Connect(function() tw(unloadBtn,{BackgroundColor3=Color3.fromRGB(50,14,14)}) end)
-    local unloadConfirm=false; local unloadTimer=nil
+    local unloadConfirm = false
     unloadBtn.MouseButton1Click:Connect(function()
         if not unloadConfirm then
-            unloadConfirm=true; unloadBtn.Text="⚠  Click again to confirm unload"
+            unloadConfirm = true; unloadBtn.Text = "⚠  Click again to confirm"
             tw(unloadBtn,{BackgroundColor3=Color3.fromRGB(100,30,10)})
-            if unloadTimer then task.cancel(unloadTimer) end
-            unloadTimer=task.delay(3,function()
-                unloadConfirm=false; unloadBtn.Text="⏏  Unload UI  (destroys everything)"
-                tw(unloadBtn,{BackgroundColor3=Color3.fromRGB(50,14,14)})
-            end)
+            task.delay(3, function() unloadConfirm = false; unloadBtn.Text = "⏏  Unload UI  (destroys everything)"; tw(unloadBtn,{BackgroundColor3=Color3.fromRGB(50,14,14)}) end)
         else
             saveAll(); cleanup()
         end
     end)
 
-    sectionLabel(settingsPage,"SETTINGS PRESETS",7)
-    local spSaveRow=Instance.new("Frame"); spSaveRow.Size=UDim2.new(1,0,0,36); spSaveRow.LayoutOrder=8
-    spSaveRow.BackgroundColor3=T.card; spSaveRow.BorderSizePixel=0; spSaveRow.Parent=settingsPage; corner(spSaveRow,8); stroke(spSaveRow,T.border)
-    local spNameBox=Instance.new("TextBox"); spNameBox.Size=UDim2.new(1,-82,1,-10); spNameBox.Position=UDim2.new(0,10,0,5)
-    spNameBox.BackgroundColor3=T.surface; spNameBox.BorderSizePixel=0; spNameBox.PlaceholderText="Preset name..."
-    spNameBox.PlaceholderColor3=T.sub; spNameBox.Text=""; spNameBox.TextColor3=T.text; spNameBox.TextSize=12
-    spNameBox.Font=Enum.Font.Gotham; spNameBox.ClearTextOnFocus=false; spNameBox.Parent=spSaveRow; corner(spNameBox,6)
-    local spSaveBtn=Instance.new("TextButton"); spSaveBtn.Size=UDim2.new(0,64,1,-10); spSaveBtn.Position=UDim2.new(1,-72,0,5)
-    spSaveBtn.BackgroundColor3=T.accent; spSaveBtn.BorderSizePixel=0; spSaveBtn.Text="Save"
-    spSaveBtn.TextColor3=Color3.fromRGB(14,14,14); spSaveBtn.TextSize=12; spSaveBtn.Font=Enum.Font.GothamBold
-    spSaveBtn.AutoButtonColor=false; spSaveBtn.Parent=spSaveRow; corner(spSaveBtn,6)
-    spSaveBtn.MouseEnter:Connect(function() tw(spSaveBtn,{BackgroundColor3=T.accentH}) end)
-    spSaveBtn.MouseLeave:Connect(function() tw(spSaveBtn,{BackgroundColor3=T.accent}) end)
+    -- Keybind listener (runs after cards are built so no forward-ref issues)
+    UserInputService.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
+        if inp.KeyCode == state.spoofKey then
+            state.enabled = not state.enabled
+            if state.enabled then startSpoof() end; updateStatus()
+        elseif inp.KeyCode == state.guiKey then
+            setGuiVisible(not guiVisible)
+        end
+    end)
 
-    local spFrame=Instance.new("Frame"); spFrame.Size=UDim2.new(1,0,0,0); spFrame.LayoutOrder=9
-    spFrame.BackgroundTransparency=1; spFrame.AutomaticSize=Enum.AutomaticSize.Y; spFrame.Parent=settingsPage; listLayout(spFrame,4)
+    -- ════════════════════════════════════════════════════════════════════
+    --  MOBILE-ONLY RIGHT-SIDE BUTTON PANEL
+    --  Visible only on TouchEnabled devices (phones/tablets).
+    --  Buttons: Toggle UI | Lock UI
+    --  Styled to match the screenshot — dark bg, red border, plain text.
+    -- ════════════════════════════════════════════════════════════════════
+    local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
 
-    local spRows={}
-    local function applySettingsPreset(sp)
-        local ok,kc=pcall(function() return Enum.KeyCode[sp.spoofKey] end); if ok and kc then state.spoofKey=kc end
-        local ok2,kc2=pcall(function() return Enum.KeyCode[sp.guiKey] end); if ok2 and kc2 then state.guiKey=kc2 end
-        state.espEnabled   = sp.espEnabled
-        state.espR         = sp.espR;   state.espG = sp.espG;   state.espB = sp.espB
-        state.espBox       = sp.espBox;  state.espName   = sp.espName
-        state.espHealth    = sp.espHealth; state.espDist = sp.espDist
-        state.espTracer    = sp.espTracer
-        state.randomDir    = sp.randomDir
-        state.flySpeed     = sp.flySpeed;  state.flyHeight = sp.flyHeight
-        state.fovEnabled   = sp.fovEnabled; state.fovRange = sp.fovRange
-        state.orbitSpeed   = sp.orbitSpeed; state.orbitDistance = sp.orbitDistance
-        state.orbitHeight  = sp.orbitHeight; state.orbitReverse  = sp.orbitReverse
-        if state.flyEnabled    then startFly()    end
-        if state.orbitEnabled  then startOrbit()  end
-        refreshAllESP(); saveAll()
-    end
+    if isMobile then
+        local BTN_W    = 110
+        local BTN_H    = 46
+        local BTN_GAP  = 8
+        local BTN_PADX = 10   -- from right edge
+        local BTN_PADY = 120  -- from top
 
-    local function rebuildSPRows()
-        for _,r in pairs(spRows) do r:Destroy() end; spRows={}
-        for i,sp in ipairs(settingsPresets) do
-            local row=Instance.new("Frame"); row.Size=UDim2.new(1,0,0,38); row.LayoutOrder=i
-            row.BackgroundColor3=T.card; row.BorderSizePixel=0; row.Parent=spFrame; corner(row,8); table.insert(spRows,row)
-            local applyBtn=Instance.new("TextButton"); applyBtn.Size=UDim2.new(1,-50,1,0); applyBtn.BackgroundTransparency=1
-            applyBtn.AutoButtonColor=false; applyBtn.TextXAlignment=Enum.TextXAlignment.Left; applyBtn.Parent=row
-            local nameLbl=Instance.new("TextLabel"); nameLbl.Size=UDim2.new(1,0,1,0)
-            nameLbl.BackgroundTransparency=1; nameLbl.Text=sp.name; nameLbl.TextSize=12; nameLbl.Font=Enum.Font.GothamBold
-            nameLbl.TextColor3=T.accent; nameLbl.TextXAlignment=Enum.TextXAlignment.Left; nameLbl.Parent=applyBtn
-            local lp=Instance.new("UIPadding"); lp.PaddingLeft=UDim.new(0,10); lp.Parent=nameLbl
-            applyBtn.MouseButton1Click:Connect(function()
-                applySettingsPreset(sp)
-                tw(row,{BackgroundColor3=T.accentD}); task.delay(0.3,function() tw(row,{BackgroundColor3=T.card}) end)
+        -- Container so buttons move together
+        local mobilePanel = Instance.new("Frame")
+        mobilePanel.Name                = "MobilePanel"
+        mobilePanel.Size                = UDim2.new(0, BTN_W, 0, BTN_H*2 + BTN_GAP)
+        mobilePanel.Position            = UDim2.new(1, -(BTN_W + BTN_PADX), 0, BTN_PADY)
+        mobilePanel.BackgroundTransparency = 1
+        mobilePanel.ZIndex              = 30
+        mobilePanel.Parent              = gui
+
+        local function makeMobileBtn(labelText, yOffset, onClick)
+            local btn = Instance.new("TextButton")
+            btn.Size                = UDim2.new(1, 0, 0, BTN_H)
+            btn.Position            = UDim2.new(0, 0, 0, yOffset)
+            btn.BackgroundColor3    = Color3.fromRGB(8, 8, 8)
+            btn.BorderSizePixel     = 0
+            btn.Text                = labelText
+            btn.TextSize            = 14
+            btn.Font                = Enum.Font.GothamBold
+            btn.TextColor3          = Color3.fromRGB(220, 220, 220)
+            btn.AutoButtonColor     = false
+            btn.ZIndex              = 31
+            btn.Parent              = mobilePanel
+            corner(btn, 4)
+            -- Red border matching screenshot
+            local s = Instance.new("UIStroke")
+            s.Color     = Color3.fromRGB(180, 30, 30)
+            s.Thickness = 2
+            s.Parent    = btn
+
+            btn.MouseButton1Click:Connect(onClick)
+
+            -- Press feedback
+            btn.InputBegan:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.Touch then
+                    tw(btn, {BackgroundColor3 = Color3.fromRGB(30, 8, 8)})
+                end
             end)
-            local delBtn=Instance.new("TextButton"); delBtn.Size=UDim2.new(0,26,0,26); delBtn.Position=UDim2.new(1,-34,0.5,-13)
-            delBtn.BackgroundColor3=T.red; delBtn.BorderSizePixel=0; delBtn.Text="✕"; delBtn.TextColor3=Color3.fromRGB(255,255,255)
-            delBtn.TextSize=10; delBtn.Font=Enum.Font.GothamBold; delBtn.AutoButtonColor=false; delBtn.Parent=row; corner(delBtn,5)
-            delBtn.MouseEnter:Connect(function() tw(delBtn,{BackgroundColor3=T.redH}) end)
-            delBtn.MouseLeave:Connect(function() tw(delBtn,{BackgroundColor3=T.red}) end)
-            local ci=i; delBtn.MouseButton1Click:Connect(function() table.remove(settingsPresets,ci); saveAll(); rebuildSPRows() end)
-            row.MouseEnter:Connect(function() tw(row,{BackgroundColor3=T.cardH}) end)
-            row.MouseLeave:Connect(function() tw(row,{BackgroundColor3=T.card}) end)
-        end
-    end
+            btn.InputEnded:Connect(function(inp)
+                if inp.UserInputType == Enum.UserInputType.Touch then
+                    tw(btn, {BackgroundColor3 = Color3.fromRGB(8, 8, 8)})
+                end
+            end)
 
-    spSaveBtn.MouseButton1Click:Connect(function()
-        local n=spNameBox.Text:match("^%s*(.-)%s*$")
-        if n=="" then tw(spNameBox,{BackgroundColor3=Color3.fromRGB(48,18,18)}); task.delay(0.5,function() tw(spNameBox,{BackgroundColor3=T.surface}) end); return end
-        table.insert(settingsPresets,{
-            name=n,
-            spoofKey=state.spoofKey.Name, guiKey=state.guiKey.Name,
-            espEnabled=state.espEnabled, espR=state.espR, espG=state.espG, espB=state.espB,
-            espBox=state.espBox, espName=state.espName, espHealth=state.espHealth,
-            espDist=state.espDist, espTracer=state.espTracer,
-            randomDir=state.randomDir,
-            flySpeed=state.flySpeed, flyHeight=state.flyHeight,
-            fovEnabled=state.fovEnabled, fovRange=state.fovRange,
-            orbitSpeed=state.orbitSpeed, orbitDistance=state.orbitDistance,
-            orbitHeight=state.orbitHeight, orbitReverse=state.orbitReverse,
-        })
-        saveAll(); spNameBox.Text=""
-        spSaveBtn.Text="✓"; tw(spSaveBtn,{BackgroundColor3=T.accentH})
-        task.delay(0.8,function() spSaveBtn.Text="Save"; tw(spSaveBtn,{BackgroundColor3=T.accent}) end)
-        rebuildSPRows()
-    end)
-    rebuildSPRows()
+            return btn
+        end
 
-    -- ════════════════════════════════════════════════════════════════════
-    --  MOBILE TOGGLE BUTTON
-    -- ════════════════════════════════════════════════════════════════════
-    local MB_SIZE=52
-    local mobileBtn=Instance.new("TextButton"); mobileBtn.Name="MobileToggle"
-    mobileBtn.Size=UDim2.new(0,MB_SIZE,0,MB_SIZE); mobileBtn.Position=UDim2.new(1,-(MB_SIZE+14),1,-(MB_SIZE+14))
-    mobileBtn.BackgroundColor3=T.accentD; mobileBtn.BorderSizePixel=0; mobileBtn.Text="⟁"
-    mobileBtn.TextSize=20; mobileBtn.Font=Enum.Font.GothamBold; mobileBtn.TextColor3=T.text
-    mobileBtn.AutoButtonColor=false; mobileBtn.ZIndex=20; mobileBtn.Parent=gui; corner(mobileBtn,MB_SIZE/2); stroke(mobileBtn,T.accent,1.5)
-    local function pulseMB()
-        tw(mobileBtn,{BackgroundColor3=T.accent}); task.delay(0.55,function() tw(mobileBtn,{BackgroundColor3=T.accentD}); task.delay(0.58,pulseMB) end)
+        -- Toggle UI button
+        makeMobileBtn("Toggle UI", 0, function()
+            setGuiVisible(not guiVisible)
+        end)
+
+        -- Lock UI button — prevents dragging when locked
+        local lockBtn
+        lockBtn = makeMobileBtn("Lock UI", BTN_H + BTN_GAP, function()
+            guiLocked = not guiLocked
+            -- Visual feedback: border turns green when locked
+            local s = lockBtn:FindFirstChildOfClass("UIStroke")
+            if s then
+                s.Color = guiLocked and Color3.fromRGB(60,180,80) or Color3.fromRGB(180,30,30)
+            end
+            lockBtn.Text = guiLocked and "Locked 🔒" or "Lock UI"
+        end)
+
+        -- Make the panel itself draggable so players can reposition it
+        local panDragging, panStart, panOrig = false, nil, nil
+        mobilePanel.InputBegan:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.Touch then
+                panDragging = true; panStart = inp.Position; panOrig = mobilePanel.Position
+            end
+        end)
+        mobilePanel.InputEnded:Connect(function(inp)
+            if inp.UserInputType == Enum.UserInputType.Touch then panDragging = false end
+        end)
+        UserInputService.InputChanged:Connect(function(inp)
+            if panDragging and inp.UserInputType == Enum.UserInputType.Touch then
+                local d = inp.Position - panStart
+                mobilePanel.Position = UDim2.new(
+                    panOrig.X.Scale, panOrig.X.Offset + d.X,
+                    panOrig.Y.Scale, panOrig.Y.Offset + d.Y
+                )
+            end
+        end)
     end
-    pulseMB()
-    mobileBtn.MouseButton1Click:Connect(function()
-        setGuiVisible(not guiVisible); tw(mobileBtn,{Size=UDim2.new(0,MB_SIZE-8,0,MB_SIZE-8)})
-        task.delay(0.12,function() tw(mobileBtn,{Size=UDim2.new(0,MB_SIZE,0,MB_SIZE)}) end)
-    end)
-    local mbDragging,mbDragStart,mbStartPos=false,nil,nil
-    mobileBtn.InputBegan:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then
-            mbDragging=true; mbDragStart=inp.Position; mbStartPos=mobileBtn.Position
-        end
-    end)
-    mobileBtn.InputEnded:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1 or inp.UserInputType==Enum.UserInputType.Touch then mbDragging=false end
-    end)
-    UserInputService.InputChanged:Connect(function(inp)
-        if mbDragging and (inp.UserInputType==Enum.UserInputType.MouseMovement or inp.UserInputType==Enum.UserInputType.Touch) then
-            local d=inp.Position-mbDragStart
-            mobileBtn.Position=UDim2.new(mbStartPos.X.Scale,mbStartPos.X.Offset+d.X,mbStartPos.Y.Scale,mbStartPos.Y.Offset+d.Y)
-        end
-    end)
 
     -- ── Init ──────────────────────────────────────────────────────────
-    switchTab(1); rebuildTargets(); rebuildOrbitTargets(); updateStatus(); refreshAllESP()
+    switchTab(1); rebuildTargets(); updateStatus()
 end
 
 -- ════════════════════════════════════════════════════════════════════════════
@@ -2344,13 +971,7 @@ end
 -- ════════════════════════════════════════════════════════════════════════════
 local function init()
     cleanup(); buildGUI()
-    state.enabled=true; startSpoof()
-    if state.orbitEnabled   then startOrbit()   end
-    if state.flyEnabled     then startFly()     end
-    if state.noclipEnabled  then startNoclip()  end
-    if state.aimbotEnabled  then startAimbot()  end
-    if state.triggerEnabled then startTriggerbot() end
-    if state.ragebotEnabled then startRagebot()   end
+    state.enabled = true; startSpoof()
 end
 
 init()
